@@ -28,29 +28,36 @@ const (
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 var (
-	colorBlue   = lipgloss.AdaptiveColor{Light: "21", Dark: "39"}
-	colorGreen  = lipgloss.AdaptiveColor{Light: "28", Dark: "42"}
+	colorBlue   = lipgloss.AdaptiveColor{Light: "25",  Dark: "33"}
+	colorGreen  = lipgloss.AdaptiveColor{Light: "28",  Dark: "42"}
 	colorRed    = lipgloss.AdaptiveColor{Light: "160", Dark: "203"}
-	colorMuted  = lipgloss.AdaptiveColor{Light: "244", Dark: "240"}
-	colorSubtle = lipgloss.AdaptiveColor{Light: "250", Dark: "237"}
+	colorMuted  = lipgloss.AdaptiveColor{Light: "243", Dark: "246"}
+	colorSubtle = lipgloss.AdaptiveColor{Light: "250", Dark: "239"}
 	colorAmber  = lipgloss.AdaptiveColor{Light: "214", Dark: "220"}
 
 	styleTabActive = lipgloss.NewStyle().Bold(true).
 			Foreground(lipgloss.Color("15")).
 			Background(colorBlue).
 			Padding(0, 2)
-	styleTabInact  = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
-	styleDivider   = lipgloss.NewStyle().Foreground(colorSubtle)
-	styleHeader    = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleHelp      = lipgloss.NewStyle().Foreground(colorMuted)
-	styleErr       = lipgloss.NewStyle().Foreground(colorRed)
-	styleOK        = lipgloss.NewStyle().Foreground(colorGreen)
-	styleMuted     = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSelected  = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"}).Bold(true)
+	styleTabInact   = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
+	styleDivider    = lipgloss.NewStyle().Foreground(colorSubtle)
+	styleHeader     = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleHelp       = lipgloss.NewStyle().Foreground(colorMuted)
+	styleErr        = lipgloss.NewStyle().Foreground(colorRed)
+	styleOK         = lipgloss.NewStyle().Foreground(colorGreen)
+	styleMuted      = lipgloss.NewStyle().Foreground(colorMuted)
+	styleSelected   = lipgloss.NewStyle().
+				Background(lipgloss.AdaptiveColor{Light: "189", Dark: "17"}).
+				Foreground(lipgloss.AdaptiveColor{Light: "16",  Dark: "255"}).
+				Bold(true)
 	styleIncome    = lipgloss.NewStyle().Foreground(colorGreen)
 	styleExpense   = lipgloss.NewStyle().Foreground(colorRed)
 	styleCategory  = lipgloss.NewStyle().Foreground(colorAmber)
 	styleSummaryH  = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleToday     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "214", Dark: "220"}).Bold(true)
+	styleDateWeek  = lipgloss.NewStyle().Foreground(colorMuted)
+	styleDateMonth = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "247", Dark: "242"})
+	styleDateOld   = lipgloss.NewStyle().Foreground(colorSubtle)
 )
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -94,7 +101,7 @@ func New() Model {
 
 func Run() error {
 	m := New()
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
@@ -135,6 +142,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg.err
+
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.view == viewSummary {
+				m.vp.LineUp(3)
+			} else if m.cursor > 0 {
+				m.cursor--
+			}
+		case tea.MouseButtonWheelDown:
+			if m.view == viewSummary {
+				m.vp.LineDown(3)
+			} else if m.cursor < len(m.txs)-1 {
+				m.cursor++
+			}
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		m.err = nil
@@ -200,6 +224,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
+	case "pgdown", "ctrl+f":
+		page := max(1, m.height/3)
+		m.cursor = min(len(m.txs)-1, m.cursor+page)
+	case "pgup", "ctrl+b":
+		page := max(1, m.height/3)
+		m.cursor = max(0, m.cursor-page)
 	case "g":
 		m.cursor = 0
 	case "G":
@@ -256,6 +286,16 @@ func (m Model) View() string {
 
 func (m Model) renderList() string {
 	var b strings.Builder
+	w := m.width
+
+	// ── app header ──
+	appName := styleHeader.Render("budgetctl")
+	dateStr := styleMuted.Render(time.Now().Format("Mon, 02 Jan 2006"))
+	pad := w - lipgloss.Width(appName) - lipgloss.Width(dateStr)
+	if pad < 1 {
+		pad = 1
+	}
+	b.WriteString(appName + strings.Repeat(" ", pad) + dateStr + "\n")
 
 	// ── month tab bar ──
 	var parts []string
@@ -270,11 +310,11 @@ func (m Model) renderList() string {
 	if len(parts) > 0 {
 		b.WriteString(strings.Join(parts, "") + "\n")
 	} else {
-		b.WriteString(styleHeader.Render("budgetctl") + "\n")
+		b.WriteString("\n")
 	}
-	b.WriteString(styleDivider.Render(strings.Repeat("─", m.width)) + "\n")
+	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
 
-	overhead := 3
+	overhead := 4 // header + tabs + divider + statusbar
 	if m.searching {
 		b.WriteString("  " + m.searchInput.View() + "\n\n")
 		overhead += 2
@@ -299,9 +339,9 @@ func (m Model) renderList() string {
 		end := min(len(m.txs), start+listH)
 		for i := start; i < end; i++ {
 			t := &m.txs[i]
-			line := formatTxRow(t, m.width)
+			line := formatTxRow(t, w)
 			if i == m.cursor {
-				line = styleSelected.Width(m.width).Render(line)
+				line = styleSelected.Width(w).Render(line)
 			}
 			b.WriteString(line + "\n")
 		}
@@ -310,15 +350,15 @@ func (m Model) renderList() string {
 	// ── status bar ──
 	netStr := ""
 	if m.summary != nil {
-		color := styleIncome
+		col := styleIncome
 		if m.summary.Net < 0 {
-			color = styleExpense
+			col = styleExpense
 		}
-		netStr = styleMuted.Render(" net:") + color.Render(fmt.Sprintf(" %+.0f€", m.summary.Net))
+		netStr = styleMuted.Render(" net:") + col.Render(fmt.Sprintf(" %+.0f€", m.summary.Net))
 	}
-	countStr := ""
+	posStr := ""
 	if len(m.txs) > 0 {
-		countStr = styleMuted.Render(fmt.Sprintf(" %d tx", len(m.txs)))
+		posStr = styleMuted.Render(fmt.Sprintf(" %d/%d", m.cursor+1, len(m.txs)))
 	}
 
 	var bar string
@@ -327,14 +367,15 @@ func (m Model) renderList() string {
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("s:summary  /:search  tab:month  j/k:nav  q:quit")
+		bar = styleHelp.Render("s:summary  /:search  tab:month  j/k:nav  pgdn/pgup  q:quit")
 	}
-	right := netStr + countStr
-	pad := m.width - lipgloss.Width(bar) - lipgloss.Width(right)
+	right := netStr + posStr
+	pad = w - lipgloss.Width(bar) - lipgloss.Width(right)
 	if pad < 0 {
 		pad = 0
 	}
-	b.WriteString("\n" + bar + strings.Repeat(" ", pad) + right)
+	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
+	b.WriteString(bar + strings.Repeat(" ", pad) + right)
 	return b.String()
 }
 
@@ -478,6 +519,9 @@ func formatTxRow(t *models.Transaction, width int) string {
 	}
 	catStyled := styleCategory.Render(fmt.Sprintf("%-16s", cat))
 
+	dateStr := t.Date.Format("2006-01-02")
+	dateStyled := coloredDate(dateStr, t.Date)
+
 	// description truncated
 	descW := width - 12 - 10 - 18 - 4
 	if descW < 10 {
@@ -489,11 +533,31 @@ func formatTxRow(t *models.Transaction, width int) string {
 	}
 
 	return fmt.Sprintf("%s  %s  %s  %s",
-		t.Date.Format("2006-01-02"),
+		dateStyled,
 		amtStyled,
 		catStyled,
 		desc,
 	)
+}
+
+func coloredDate(s string, t time.Time) string {
+	now := time.Now()
+	switch {
+	case sameDay(t, now):
+		return styleToday.Render(s)
+	case t.After(now.AddDate(0, 0, -7)):
+		return styleDateWeek.Render(s)
+	case t.After(now.AddDate(0, 0, -30)):
+		return styleDateMonth.Render(s)
+	default:
+		return styleDateOld.Render(s)
+	}
+}
+
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
 }
 
 func abs(f float64) float64 {
