@@ -66,6 +66,7 @@ type txLoadedMsg struct {
 	txs    []models.Transaction
 	months []string
 	sum    *models.Summary
+	goals  []models.GoalStatus
 }
 type errMsg struct{ err error }
 
@@ -81,6 +82,7 @@ type Model struct {
 	months     []string // ["2026-06", "2026-05", ...]
 	activeTab  int      // index into months; -1 = all
 	summary    *models.Summary
+	goals      []models.GoalStatus
 	searchQ    string
 	searching  bool
 	searchInput textinput.Model
@@ -130,6 +132,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case txLoadedMsg:
 		m.txs = msg.txs
 		m.summary = msg.sum
+		m.goals = msg.goals
 		if len(msg.months) > 0 {
 			m.months = msg.months
 		}
@@ -137,7 +140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(m.txs)-1)
 		}
 		if m.view == viewSummary && m.summary != nil {
-			m.vp.SetContent(renderSummary(m.summary, m.width))
+			m.vp.SetContent(renderSummary(m.summary, m.goals, m.width))
 		}
 
 	case errMsg:
@@ -236,7 +239,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = max(0, len(m.txs)-1)
 	case "S", "s":
 		m.view = viewSummary
-		m.vp.SetContent(renderSummary(m.summary, m.width))
+		m.vp.SetContent(renderSummary(m.summary, m.goals, m.width))
 		m.vp.GotoTop()
 	case "/":
 		m.searching = true
@@ -407,7 +410,7 @@ func (m Model) renderSummaryView() string {
 	return b.String()
 }
 
-func renderSummary(sum *models.Summary, width int) string {
+func renderSummary(sum *models.Summary, goals []models.GoalStatus, width int) string {
 	if sum == nil {
 		return "No data for this month."
 	}
@@ -469,6 +472,43 @@ func renderSummary(sum *models.Summary, width int) string {
 		))
 	}
 
+	// ── Goals ────────────────────────────────────────────────────────────────
+	if len(goals) > 0 {
+		b.WriteString("\n" + styleSummaryH.Render("Budget goals:") + "\n\n")
+		for _, gs := range goals {
+			filled := int(gs.Percent / 100 * float64(barW))
+			if filled > barW {
+				filled = barW
+			}
+			if filled < 0 {
+				filled = 0
+			}
+			barStyle := styleOK
+			labelStyle := styleOK
+			if gs.Percent >= 100 {
+				barStyle = styleExpense
+				labelStyle = styleExpense
+			} else if gs.Percent >= 80 {
+				barStyle = lipgloss.NewStyle().Foreground(colorAmber)
+				labelStyle = lipgloss.NewStyle().Foreground(colorAmber)
+			}
+			bar := "[" + barStyle.Render(strings.Repeat("█", filled)) +
+				styleMuted.Render(strings.Repeat("░", barW-filled)) + "]"
+			pctStr := labelStyle.Render(fmt.Sprintf("%5.0f%%", gs.Percent))
+			remaining := ""
+			if gs.Remaining >= 0 {
+				remaining = styleOK.Render(fmt.Sprintf("  %.0f€ left", gs.Remaining))
+			} else {
+				remaining = styleExpense.Render(fmt.Sprintf("  %.0f€ over", -gs.Remaining))
+			}
+			b.WriteString(fmt.Sprintf("  %-22s %s  %s  %s%s\n",
+				styleCategory.Render(gs.Category),
+				fmt.Sprintf("%10s", fmt.Sprintf("%.0f/%.0f€", gs.Spent, gs.Monthly)),
+				bar, pctStr, remaining,
+			))
+		}
+	}
+
 	_ = width
 	return b.String()
 }
@@ -493,7 +533,10 @@ func loadCmd(month, query string) tea.Cmd {
 		// summary for active month
 		sum, _ := s.Summary(ctx, month)
 
-		return txLoadedMsg{txs: txs, months: months, sum: sum}
+		// goals with current-month spend
+		goals, _ := s.GoalStatuses(ctx, month)
+
+		return txLoadedMsg{txs: txs, months: months, sum: sum, goals: goals}
 	}
 }
 
