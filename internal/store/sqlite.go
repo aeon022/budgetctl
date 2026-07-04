@@ -46,6 +46,11 @@ func (s *Store) migrate() error {
 			pattern  TEXT PRIMARY KEY,
 			category TEXT NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS budget_goals (
+			category TEXT PRIMARY KEY,
+			monthly  REAL NOT NULL DEFAULT 0
+		);
 	`)
 	return err
 }
@@ -249,6 +254,69 @@ func (s *Store) ApplyRules(ctx context.Context) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+// ── Budget goals ──────────────────────────────────────────────────────────────
+
+func (s *Store) SaveGoal(ctx context.Context, category string, monthly float64) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO budget_goals (category, monthly) VALUES (?, ?)
+		 ON CONFLICT(category) DO UPDATE SET monthly=excluded.monthly`,
+		strings.ToLower(category), monthly)
+	return err
+}
+
+func (s *Store) DeleteGoal(ctx context.Context, category string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM budget_goals WHERE category=?`, strings.ToLower(category))
+	return err
+}
+
+func (s *Store) ListGoals(ctx context.Context) ([]models.BudgetGoal, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT category, monthly FROM budget_goals ORDER BY category`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var goals []models.BudgetGoal
+	for rows.Next() {
+		var g models.BudgetGoal
+		if err := rows.Scan(&g.Category, &g.Monthly); err != nil {
+			return nil, err
+		}
+		goals = append(goals, g)
+	}
+	return goals, rows.Err()
+}
+
+func (s *Store) GoalStatuses(ctx context.Context, month string) ([]models.GoalStatus, error) {
+	goals, err := s.ListGoals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sum, err := s.Summary(ctx, month)
+	if err != nil {
+		return nil, err
+	}
+	var out []models.GoalStatus
+	for _, g := range goals {
+		spent := -sum.ByCategory[g.Category] // expenses are negative in DB
+		if spent < 0 {
+			spent = 0
+		}
+		remaining := g.Monthly - spent
+		pct := 0.0
+		if g.Monthly > 0 {
+			pct = (spent / g.Monthly) * 100
+		}
+		out = append(out, models.GoalStatus{
+			BudgetGoal: g,
+			Spent:      spent,
+			Remaining:  remaining,
+			Percent:    pct,
+		})
+	}
+	return out, nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

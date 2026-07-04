@@ -23,6 +23,10 @@ func Serve() error {
 	s.AddTool(toolImport(), handleImport)
 	s.AddTool(toolTag(), handleTag)
 	s.AddTool(toolApplyRules(), handleApplyRules)
+	s.AddTool(toolListGoals(), handleListGoals)
+	s.AddTool(toolSetGoal(), handleSetGoal)
+	s.AddTool(toolDeleteGoal(), handleDeleteGoal)
+	s.AddTool(toolDetectRecurring(), handleDetectRecurring)
 	return server.ServeStdio(s)
 }
 
@@ -210,6 +214,139 @@ func handleTag(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult,
 		result += fmt.Sprintf("\nApplied to %d transactions", n)
 	}
 	return mcp.NewToolResultText(result), nil
+}
+
+func toolListGoals() mcp.Tool {
+	return mcp.NewTool("list_budget_goals",
+		mcp.WithDescription("List all budget goals with current-month spending progress. Shows spent vs. budget and remaining amount."),
+		mcp.WithString("month", mcp.Description("Month for spend comparison (YYYY-MM, default: current)")),
+	)
+}
+
+func toolSetGoal() mcp.Tool {
+	return mcp.NewTool("set_budget_goal",
+		mcp.WithDescription("Set or update a monthly spending limit for a category."),
+		mcp.WithString("category", mcp.Required(), mcp.Description("Category name (must match category in transactions)")),
+		mcp.WithNumber("monthly", mcp.Required(), mcp.Description("Monthly budget limit in euros (positive number)")),
+	)
+}
+
+func toolDeleteGoal() mcp.Tool {
+	return mcp.NewTool("delete_budget_goal",
+		mcp.WithDescription("Remove a budget goal for a category."),
+		mcp.WithString("category", mcp.Required(), mcp.Description("Category name")),
+	)
+}
+
+func handleListGoals(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	month := req.GetString("month", "")
+	if month == "" {
+		month = time.Now().Format("2006-01")
+	}
+	s, err := store.New(config.DBPath())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer s.Close()
+
+	statuses, err := s.GoalStatuses(context.Background(), month)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(statuses) == 0 {
+		return mcp.NewToolResultText("No budget goals set."), nil
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Budget goals for %s:\n\n", month))
+	for _, gs := range statuses {
+		status := "ok"
+		if gs.Percent >= 100 {
+			status = "OVER BUDGET"
+		} else if gs.Percent >= 80 {
+			status = "warning"
+		}
+		b.WriteString(fmt.Sprintf("%-20s  spent %.2f / %.2f €  (%.0f%%)  [%s]\n",
+			gs.Category, gs.Spent, gs.Monthly, gs.Percent, status))
+	}
+	return mcp.NewToolResultText(b.String()), nil
+}
+
+func handleSetGoal(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	category := req.GetString("category", "")
+	monthly := req.GetFloat("monthly", 0)
+	if category == "" || monthly <= 0 {
+		return mcp.NewToolResultError("category and positive monthly amount are required"), nil
+	}
+	s, err := store.New(config.DBPath())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer s.Close()
+	if err := s.SaveGoal(context.Background(), category, monthly); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Goal set: %s = %.2f €/month", category, monthly)), nil
+}
+
+func handleDeleteGoal(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	category := req.GetString("category", "")
+	if category == "" {
+		return mcp.NewToolResultError("category is required"), nil
+	}
+	s, err := store.New(config.DBPath())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer s.Close()
+	if err := s.DeleteGoal(context.Background(), category); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Goal deleted: %s", category)), nil
+}
+
+func toolDetectRecurring() mcp.Tool {
+	return mcp.NewTool("detect_recurring_payments",
+		mcp.WithDescription("Scan all transactions for recurring payment patterns (subscriptions, rent, utilities). Returns detected patterns with frequency, typical amount, and last seen date."),
+	)
+}
+
+func handleDetectRecurring(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	s, err := store.New(config.DBPath())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer s.Close()
+
+	txs, err := s.List(context.Background(), store.Filter{})
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	patterns := budget.DetectRecurring(txs)
+	if len(patterns) == 0 {
+		return mcp.NewToolResultText("No recurring patterns detected."), nil
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Detected %d recurring payments:\n\n", len(patterns)))
+	for _, p := range patterns {
+		cat := p.Category
+		if cat == "" {
+			cat = "(uncategorized)"
+		}
+		b.WriteString(fmt.Sprintf("%-30s  %.2f €/%-8s  %-18s  last: %s  seen %dx\n",
+			truncateStr(p.Description, 30), p.Amount, p.Frequency, cat,
+			p.LastSeen.Format("2006-01-02"), p.Count))
+	}
+	return mcp.NewToolResultText(b.String()), nil
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
 
 func handleApplyRules(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
