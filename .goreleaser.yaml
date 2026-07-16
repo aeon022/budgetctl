@@ -43,6 +43,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: https://github.com/aeon022/budgetctl
+    license: MIT
     description: "Budget tracking from your terminal - import bank CSVs, analyze spending"
     install: |
       bin.install "budgetctl"
