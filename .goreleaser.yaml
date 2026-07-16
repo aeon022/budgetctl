@@ -1,0 +1,50 @@
+version: 2
+
+project_name: budgetctl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: .
+    binary: budgetctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w -X github.com/aeon022/budgetctl/cmd.Version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+
+# Publishing to the Homebrew tap requires the HOMEBREW_TAP_TOKEN secret
+# (fine-grained PAT with contents:write on aeon022/homebrew-tap).
+brews:
+  - repository:
+      owner: aeon022
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/aeon022/budgetctl
+    description: "Budget tracking from your terminal - import bank CSVs, analyze spending"
+    install: |
+      bin.install "budgetctl"
+    test: |
+      system "#{bin}/budgetctl", "version"

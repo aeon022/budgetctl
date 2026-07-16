@@ -1,0 +1,19 @@
+# Binary
+budgetctl
+*.exe
+
+# Go build/test artifacts
+*.test
+*.out
+dist/
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+
+# macOS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
