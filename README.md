@@ -1,6 +1,6 @@
 # budgetctl
 
-Terminal budget tracker. Import bank CSV exports, categorize transactions, set spending goals, and detect subscriptions — all from the command line or a Bubbletea TUI.
+Terminal budget tracker. Track income and expenses manually or import bank CSV exports, categorize transactions, set spending goals, and detect subscriptions — all from the command line or a Bubbletea TUI.
 
 Part of the [missionctl](https://github.com/aeon022/missionctl) suite. No bank API. No cloud. Works from CSV exports you download yourself.
 
@@ -49,6 +49,7 @@ budgetctl goal list
 
 ```
 budgetctl [tui]                                      Open TUI (default)
+budgetctl add DESC AMOUNT [-c CAT] [-d DATE]         Add manual entry (neg = expense)
 budgetctl import FILE [--account NAME]               Import bank CSV
 budgetctl list [--month 2026-07] [--category NAME] [--query TEXT] [--limit N] [--json]
 budgetctl summary [--month 2026-07] [--json]         Monthly summary
@@ -192,11 +193,19 @@ Shows a full-month overview:
 | `j` / `k` | Navigate down / up |
 | `PgDn` / `PgUp` | Page down / up |
 | `g` / `G` | Jump to first / last transaction |
+| `n` | New manual entry (date, description, amount, category) |
+| `e` | Edit selected entry |
+| `d` | Delete selected entry (asks to confirm) |
+| `c` | Set category for selected entry |
 | `s` | Switch to Summary view |
 | `S` | Sync (re-apply rules, refresh data) |
 | `/` | Open search |
 | `Tab` / `Shift+Tab` | Next / previous month |
+| `?` | Help overlay |
 | `Enter` / `Esc` | Back / cancel |
+
+In the entry form, amounts accept both `-12.50` and `-12,90` (German decimal comma).
+Negative = expense, positive = income.
 | `q` | Quit |
 
 **Summary View**
@@ -236,6 +245,8 @@ Restart Claude Desktop. budgetctl tools will appear automatically.
 | Tool | Description |
 |---|---|
 | `list_transactions` | List transactions, filtered by month, category, or query string |
+| `add_transaction` | Add a manual income or expense entry (auto-categorized via rules) |
+| `delete_transaction` | Delete a transaction by ID |
 | `budget_summary` | Monthly income, expenses, and net with full category breakdown |
 | `import_transactions` | Import a CSV file by path |
 | `tag_transactions` | Create a category rule (pattern, category, and optionally apply immediately) |

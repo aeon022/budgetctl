@@ -187,6 +187,38 @@ func (s *Store) ListAccounts(ctx context.Context) ([]string, error) {
 }
 
 // SetCategory updates the category for a single transaction.
+// Update rewrites date, description, amount, and category of an existing transaction.
+func (s *Store) Update(ctx context.Context, t *models.Transaction) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE transactions SET date=?, description=?, amount=?, category=? WHERE id=?
+	`,
+		t.Date.UTC().Format("2006-01-02"),
+		t.Description,
+		t.Amount,
+		t.Category,
+		t.ID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("transaction %q not found", t.ID)
+	}
+	return nil
+}
+
+// Delete removes a transaction permanently.
+func (s *Store) Delete(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM transactions WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("transaction %q not found", id)
+	}
+	return nil
+}
+
 func (s *Store) SetCategory(ctx context.Context, id, category string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE transactions SET category=? WHERE id=?`, category, id)

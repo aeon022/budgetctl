@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aeon022/budgetctl/internal/budget"
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
@@ -24,7 +25,19 @@ const (
 	viewList    view = iota
 	viewSummary view = iota
 	viewHelp    view = iota
+	viewForm    view = iota
 )
+
+// form field indices
+const (
+	fDate = iota
+	fDesc
+	fAmount
+	fCategory
+	fCount
+)
+
+var formLabels = [fCount]string{"Date", "Description", "Amount", "Category"}
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +83,8 @@ type txLoadedMsg struct {
 	goals  []models.GoalStatus
 }
 type errMsg struct{ err error }
+type txSavedMsg struct{ err error }
+type txDeletedMsg struct{ err error }
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -90,6 +105,16 @@ type Model struct {
 	filterCat  string
 	vp         viewport.Model
 
+	// add/edit form
+	form    [fCount]textinput.Model
+	formIdx int
+	editTx  *models.Transaction // nil = new entry
+
+	// quick categorize + delete confirm
+	categorizing bool
+	catInput     textinput.Model
+	deleteTarget *models.Transaction
+
 	status     string
 	statusTime time.Time
 	err        error
@@ -99,7 +124,35 @@ func New() Model {
 	si := textinput.New()
 	si.Placeholder = "search transactions…"
 	si.CharLimit = 100
-	return Model{searchInput: si, activeTab: 0}
+	ci := textinput.New()
+	ci.Placeholder = "category…"
+	ci.CharLimit = 60
+	return Model{searchInput: si, catInput: ci, activeTab: 0}
+}
+
+func newForm(t *models.Transaction) [fCount]textinput.Model {
+	var form [fCount]textinput.Model
+	placeholders := [fCount]string{
+		time.Now().Format("2006-01-02"),
+		"Rewe Einkauf",
+		"-42.50   (negative = expense, positive = income)",
+		"groceries (optional)",
+	}
+	for i := range form {
+		in := textinput.New()
+		in.Placeholder = placeholders[i]
+		in.CharLimit = 200
+		form[i] = in
+	}
+	if t != nil {
+		form[fDate].SetValue(t.Date.Format("2006-01-02"))
+		form[fDesc].SetValue(t.Description)
+		form[fAmount].SetValue(fmt.Sprintf("%.2f", t.Amount))
+		form[fCategory].SetValue(t.Category)
+	} else {
+		form[fDate].SetValue(time.Now().Format("2006-01-02"))
+	}
+	return form
 }
 
 func Run() error {
@@ -147,6 +200,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.err = msg.err
 
+	case txSavedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			m.view = viewList
+			m.editTx = nil
+			m.setStatus("saved")
+			return m, loadCmd(m.activeMonth(), m.searchQ)
+		}
+
+	case txDeletedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			m.setStatus("deleted")
+			return m, loadCmd(m.activeMonth(), m.searchQ)
+		}
+
 	case tea.MouseMsg:
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
@@ -174,6 +245,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateList(msg)
 		case viewSummary:
 			return m.updateSummary(msg)
+		case viewForm:
+			return m.updateForm(msg)
 		case viewHelp:
 			switch msg.String() {
 			case "ctrl+c":
@@ -194,6 +267,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// delete confirmation (status-bar prompt)
+	if m.deleteTarget != nil {
+		switch msg.String() {
+		case "y", "Y":
+			target := m.deleteTarget
+			m.deleteTarget = nil
+			return m, deleteTxCmd(target.ID)
+		default:
+			m.deleteTarget = nil
+		}
+		return m, nil
+	}
+
+	// quick categorize input
+	if m.categorizing {
+		switch msg.String() {
+		case "enter":
+			m.categorizing = false
+			m.catInput.Blur()
+			if len(m.txs) > 0 {
+				id := m.txs[m.cursor].ID
+				cat := strings.TrimSpace(m.catInput.Value())
+				return m, setCategoryCmd(id, cat)
+			}
+			return m, nil
+		case "esc":
+			m.categorizing = false
+			m.catInput.Blur()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.catInput, cmd = m.catInput.Update(msg)
+		return m, cmd
+	}
+
 	if m.searching {
 		switch msg.String() {
 		case "enter":
@@ -256,6 +364,33 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetValue("")
 	case "?":
 		m.view = viewHelp
+	case "n":
+		m.view = viewForm
+		m.editTx = nil
+		m.form = newForm(nil)
+		m.formIdx = 0
+		return m, m.form[fDate].Focus()
+	case "e":
+		if len(m.txs) > 0 {
+			t := m.txs[m.cursor]
+			m.view = viewForm
+			m.editTx = &t
+			m.form = newForm(&t)
+			m.formIdx = 0
+			return m, m.form[fDate].Focus()
+		}
+	case "d":
+		if len(m.txs) > 0 {
+			t := m.txs[m.cursor]
+			m.deleteTarget = &t
+		}
+	case "c":
+		if len(m.txs) > 0 {
+			m.categorizing = true
+			m.catInput.SetValue(m.txs[m.cursor].Category)
+			m.catInput.CursorEnd()
+			return m, m.catInput.Focus()
+		}
 	case "esc":
 		if m.searchQ != "" {
 			m.searchQ = ""
@@ -287,6 +422,121 @@ func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.view = viewList
+		m.editTx = nil
+		return m, nil
+	case "tab", "down":
+		m.form[m.formIdx].Blur()
+		m.formIdx = (m.formIdx + 1) % fCount
+		return m, m.form[m.formIdx].Focus()
+	case "shift+tab", "up":
+		m.form[m.formIdx].Blur()
+		m.formIdx = (m.formIdx - 1 + fCount) % fCount
+		return m, m.form[m.formIdx].Focus()
+	case "enter":
+		if m.formIdx < fCount-1 {
+			m.form[m.formIdx].Blur()
+			m.formIdx++
+			return m, m.form[m.formIdx].Focus()
+		}
+		return m.submitForm()
+	case "ctrl+s":
+		return m.submitForm()
+	}
+	var cmd tea.Cmd
+	m.form[m.formIdx], cmd = m.form[m.formIdx].Update(msg)
+	return m, cmd
+}
+
+func (m Model) submitForm() (tea.Model, tea.Cmd) {
+	dateStr := strings.TrimSpace(m.form[fDate].Value())
+	desc := strings.TrimSpace(m.form[fDesc].Value())
+	amountStr := strings.TrimSpace(m.form[fAmount].Value())
+	category := strings.TrimSpace(m.form[fCategory].Value())
+
+	if desc == "" {
+		m.err = fmt.Errorf("description is required")
+		return m, nil
+	}
+	if dateStr == "" {
+		dateStr = time.Now().Format("2006-01-02")
+	}
+	date, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		m.err = fmt.Errorf("invalid date %q (use YYYY-MM-DD)", dateStr)
+		return m, nil
+	}
+	amount, err := budget.ParseUserAmount(amountStr)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+
+	t := models.Transaction{
+		Date:        date,
+		Description: desc,
+		Amount:      amount,
+		Category:    category,
+		Account:     "manual",
+		Source:      "tui",
+	}
+	if m.editTx != nil {
+		t.ID = m.editTx.ID
+		t.Account = m.editTx.Account
+		t.Source = m.editTx.Source
+		return m, updateTxCmd(&t)
+	}
+	t.ID = fmt.Sprintf("manual-%d", time.Now().UnixNano())
+	return m, insertTxCmd(&t)
+}
+
+func insertTxCmd(t *models.Transaction) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath())
+		if err != nil {
+			return txSavedMsg{err}
+		}
+		defer s.Close()
+		return txSavedMsg{s.Upsert(context.Background(), t)}
+	}
+}
+
+func updateTxCmd(t *models.Transaction) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath())
+		if err != nil {
+			return txSavedMsg{err}
+		}
+		defer s.Close()
+		return txSavedMsg{s.Update(context.Background(), t)}
+	}
+}
+
+func deleteTxCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath())
+		if err != nil {
+			return txDeletedMsg{err}
+		}
+		defer s.Close()
+		return txDeletedMsg{s.Delete(context.Background(), id)}
+	}
+}
+
+func setCategoryCmd(id, category string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath())
+		if err != nil {
+			return txSavedMsg{err}
+		}
+		defer s.Close()
+		return txSavedMsg{s.SetCategory(context.Background(), id, category)}
+	}
+}
+
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (m Model) View() string {
@@ -295,6 +545,8 @@ func (m Model) View() string {
 		return m.renderSummaryView()
 	case viewHelp:
 		return m.renderHelp()
+	case viewForm:
+		return m.renderForm()
 	default:
 		return m.renderList()
 	}
@@ -339,6 +591,10 @@ func (m Model) renderList() string {
 		b.WriteString(styleMuted.Render("  /"+m.searchQ) + "\n")
 		overhead++
 	}
+	if m.categorizing {
+		b.WriteString("  " + styleCategory.Render("category: ") + m.catInput.View() + "\n")
+		overhead++
+	}
 
 	listH := m.height - overhead
 	if listH < 1 {
@@ -346,7 +602,7 @@ func (m Model) renderList() string {
 	}
 
 	if len(m.txs) == 0 {
-		b.WriteString("\n" + styleHelp.Render("  No transactions — import a CSV with: budgetctl import file.csv") + "\n")
+		b.WriteString("\n" + styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
 	} else {
 		start := 0
 		if m.cursor >= listH {
@@ -378,12 +634,15 @@ func (m Model) renderList() string {
 	}
 
 	var bar string
-	if m.err != nil {
+	if m.deleteTarget != nil {
+		bar = styleErr.Render(fmt.Sprintf("Delete %q (%+.2f€)?  ", m.deleteTarget.Description, m.deleteTarget.Amount)) +
+			styleHelp.Render("y confirm · any key cancel")
+	} else if m.err != nil {
 		bar = styleErr.Render("✗ " + m.err.Error())
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("s:summary  /:search  tab:month  j/k:nav  ?:help  q:quit")
+		bar = styleHelp.Render("n:new  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad = w - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -392,6 +651,29 @@ func (m Model) renderList() string {
 	}
 	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
 	b.WriteString(bar + strings.Repeat(" ", pad) + right)
+	return b.String()
+}
+
+func (m Model) renderForm() string {
+	var b strings.Builder
+	heading := "New Entry"
+	if m.editTx != nil {
+		heading = "Edit Entry"
+	}
+	b.WriteString("\n  " + styleHeader.Render(heading) + "\n\n")
+	for i := range m.form {
+		label := formLabels[i]
+		labelStyle := styleMuted
+		if i == m.formIdx {
+			labelStyle = styleHeader
+		}
+		b.WriteString("  " + labelStyle.Render(fmt.Sprintf("%-13s", label)) + m.form[i].View() + "\n")
+	}
+	b.WriteString("\n  " + styleHelp.Render("negative amount = expense · positive = income") + "\n")
+	if m.err != nil {
+		b.WriteString("\n  " + styleErr.Render("✗ "+m.err.Error()) + "\n")
+	}
+	b.WriteString("\n  " + styleHelp.Render("tab/enter: next field  ·  ctrl+s: save  ·  esc: cancel") + "\n")
 	return b.String()
 }
 
@@ -409,6 +691,11 @@ func (m Model) renderHelp() string {
 	b.WriteString(row("pgdn/pgup", "page down / up"))
 	b.WriteString(row("tab", "next month"))
 	b.WriteString(row("shift+tab", "previous month"))
+	b.WriteString(section("Entries"))
+	b.WriteString(row("n", "new entry (manual income/expense)"))
+	b.WriteString(row("e", "edit selected entry"))
+	b.WriteString(row("d", "delete entry (asks to confirm)"))
+	b.WriteString(row("c", "set category for selected entry"))
 	b.WriteString(section("Data"))
 	b.WriteString(row("/", "search transactions (esc clears)"))
 	b.WriteString(row("s", "summary — categories, charts, budget goals"))

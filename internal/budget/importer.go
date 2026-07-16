@@ -300,6 +300,25 @@ func parseAmountDE(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
 
+// ParseUserAmount parses a user-typed amount: "12.50", "-12,50", "1.250,00", "€ 5".
+// A comma switches interpretation to German format (dot = thousands separator).
+func ParseUserAmount(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("amount is required")
+	}
+	s = strings.ReplaceAll(s, "€", "")
+	s = strings.ReplaceAll(s, " ", "")
+	if strings.Contains(s, ",") {
+		return parseAmountDE(s)
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid amount %q (use e.g. -42.50 or -42,50)", s)
+	}
+	return f, nil
+}
+
 func parseDate(s string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02", "02.01.2006", "01/02/2006", "02/01/2006",

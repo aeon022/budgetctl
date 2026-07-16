@@ -9,6 +9,7 @@ import (
 
 	"github.com/aeon022/budgetctl/internal/budget"
 	"github.com/aeon022/budgetctl/internal/config"
+	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -21,6 +22,8 @@ func Serve() error {
 	s.AddTool(toolList(), handleList)
 	s.AddTool(toolSummary(), handleSummary)
 	s.AddTool(toolImport(), handleImport)
+	s.AddTool(toolAddTx(), handleAddTx)
+	s.AddTool(toolDeleteTx(), handleDeleteTx)
 	s.AddTool(toolTag(), handleTag)
 	s.AddTool(toolApplyRules(), handleApplyRules)
 	s.AddTool(toolListGoals(), handleListGoals)
@@ -44,6 +47,23 @@ func toolSummary() mcp.Tool {
 	return mcp.NewTool("budget_summary",
 		mcp.WithDescription("Monthly income/expense summary with category breakdown. Great for AI analysis of spending patterns."),
 		mcp.WithString("month", mcp.Description("Month (YYYY-MM, default: current month)")),
+	)
+}
+
+func toolAddTx() mcp.Tool {
+	return mcp.NewTool("add_transaction",
+		mcp.WithDescription("Add a manual income or expense entry. Negative amount = expense, positive = income. Use this when the user mentions a purchase, bill, or income that is not in a bank export."),
+		mcp.WithString("description", mcp.Required(), mcp.Description("What the money was for, e.g. 'Coffee at Balthasar'")),
+		mcp.WithNumber("amount", mcp.Required(), mcp.Description("Amount in EUR; negative for expenses (e.g. -4.5), positive for income")),
+		mcp.WithString("date", mcp.Description("Date YYYY-MM-DD (default: today)")),
+		mcp.WithString("category", mcp.Description("Category, e.g. groceries, dining, income")),
+	)
+}
+
+func toolDeleteTx() mcp.Tool {
+	return mcp.NewTool("delete_transaction",
+		mcp.WithDescription("Delete a transaction by its ID (as returned by list_transactions)."),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Transaction ID")),
 	)
 }
 
@@ -154,6 +174,78 @@ func handleSummary(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRes
 		b.WriteString(fmt.Sprintf("  %-22s %+.2f €\n", cat, item.v))
 	}
 	return mcp.NewToolResultText(b.String()), nil
+}
+
+func handleAddTx(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	desc := req.GetString("description", "")
+	amount := req.GetFloat("amount", 0)
+	dateStr := req.GetString("date", "")
+	category := req.GetString("category", "")
+	if desc == "" {
+		return mcp.NewToolResultError("description is required"), nil
+	}
+	if amount == 0 {
+		return mcp.NewToolResultError("amount must be non-zero (negative = expense, positive = income)"), nil
+	}
+
+	date := time.Now()
+	if dateStr != "" {
+		var err error
+		date, err = time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid date %q (use YYYY-MM-DD)", dateStr)), nil
+		}
+	}
+
+	s, err := store.New(config.DBPath())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	if category == "" {
+		rules, _ := s.ListRules(ctx)
+		category = budget.Categorize(desc, rules)
+	}
+
+	t := &models.Transaction{
+		ID:          fmt.Sprintf("manual-%d", time.Now().UnixNano()),
+		Date:        date,
+		Description: desc,
+		Amount:      amount,
+		Category:    category,
+		Account:     "manual",
+		Source:      "mcp",
+	}
+	if err := s.Upsert(ctx, t); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Added: %s %+.2f€ on %s (id: %s, category: %s)",
+		desc, amount, date.Format("2006-01-02"), t.ID, orDash(category))), nil
+}
+
+func handleDeleteTx(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := req.GetString("id", "")
+	if id == "" {
+		return mcp.NewToolResultError("id is required"), nil
+	}
+	s, err := store.New(config.DBPath())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer s.Close()
+	if err := s.Delete(context.Background(), id); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText("Deleted transaction " + id), nil
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 func handleImport(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
