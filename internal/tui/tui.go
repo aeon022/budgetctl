@@ -23,6 +23,7 @@ type view int
 const (
 	viewList    view = iota
 	viewSummary view = iota
+	viewHelp    view = iota
 )
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -173,6 +174,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateList(msg)
 		case viewSummary:
 			return m.updateSummary(msg)
+		case viewHelp:
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "q", "esc", "?":
+				m.view = viewList
+			}
+			return m, nil
 		}
 	}
 
@@ -245,6 +254,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searching = true
 		m.searchInput.Focus()
 		m.searchInput.SetValue("")
+	case "?":
+		m.view = viewHelp
 	case "esc":
 		if m.searchQ != "" {
 			m.searchQ = ""
@@ -282,6 +293,8 @@ func (m Model) View() string {
 	switch m.view {
 	case viewSummary:
 		return m.renderSummaryView()
+	case viewHelp:
+		return m.renderHelp()
 	default:
 		return m.renderList()
 	}
@@ -370,7 +383,7 @@ func (m Model) renderList() string {
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("s:summary  /:search  tab:month  j/k:nav  pgdn/pgup  q:quit")
+		bar = styleHelp.Render("s:summary  /:search  tab:month  j/k:nav  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad = w - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -379,6 +392,30 @@ func (m Model) renderList() string {
 	}
 	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
 	b.WriteString(bar + strings.Repeat(" ", pad) + right)
+	return b.String()
+}
+
+func (m Model) renderHelp() string {
+	keyw := func(k string) string { return styleHeader.Render(fmt.Sprintf("%-10s", k)) }
+	row := func(k, desc string) string { return "  " + keyw(k) + styleHelp.Render(desc) + "\n" }
+	section := func(t string) string { return "\n  " + styleSummaryH.Render(t) + "\n" }
+
+	var b strings.Builder
+	b.WriteString("\n  " + styleHeader.Render("budgetctl") + styleHelp.Render(" — budget from the terminal") + "\n")
+	b.WriteString(section("Navigation"))
+	b.WriteString(row("j / ↓", "move down"))
+	b.WriteString(row("k / ↑", "move up"))
+	b.WriteString(row("g / G", "jump to top / bottom"))
+	b.WriteString(row("pgdn/pgup", "page down / up"))
+	b.WriteString(row("tab", "next month"))
+	b.WriteString(row("shift+tab", "previous month"))
+	b.WriteString(section("Data"))
+	b.WriteString(row("/", "search transactions (esc clears)"))
+	b.WriteString(row("s", "summary — categories, charts, budget goals"))
+	b.WriteString(section("Other"))
+	b.WriteString(row("?", "toggle this help"))
+	b.WriteString(row("q", "quit"))
+	b.WriteString("\n" + styleHelp.Render("  Import & categorize on the CLI: budgetctl import file.csv · budgetctl tag PATTERN --category NAME") + "\n")
 	return b.String()
 }
 
