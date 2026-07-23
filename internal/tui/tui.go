@@ -33,6 +33,7 @@ const (
 	viewHelp    view = iota
 	viewForm    view = iota
 	viewImport  view = iota
+	viewDetail  view = iota
 )
 
 // ── Import assistant steps ──────────────────────────────────────────────────
@@ -152,6 +153,9 @@ type Model struct {
 	categorizing bool
 	catInput     textinput.Model
 	deleteTarget *models.Transaction
+
+	// "enter" transaction detail popup
+	detailTx *models.Transaction
 
 	// "?" transient help popup
 	helpVP   viewport.Model
@@ -380,6 +384,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.helpVP, cmd = m.helpVP.Update(msg)
 			return m, cmd
+		case viewDetail:
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "e":
+				if m.detailTx != nil {
+					t := *m.detailTx
+					m.view = viewForm
+					m.editTx = &t
+					m.form = newForm(&t)
+					m.formIdx = 0
+					m.detailTx = nil
+					return m, m.form[fDate].Focus()
+				}
+			default:
+				m.view = viewList
+				m.detailTx = nil
+			}
+			return m, nil
 		}
 	}
 
@@ -631,6 +654,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		m = m.openImport()
 		return m, m.fp.Init()
+	case "enter":
+		if len(m.txs) > 0 {
+			t := m.txs[m.cursor]
+			m.detailTx = &t
+			m.view = viewDetail
+		}
 	case "e":
 		if len(m.txs) > 0 {
 			t := m.txs[m.cursor]
@@ -823,9 +852,97 @@ func (m Model) View() string {
 		return m.renderForm()
 	case viewImport:
 		return overlay.Center(m.renderList(), m.renderImportPopup(), m.width, m.height, 0)
+	case viewDetail:
+		return overlay.Center(m.renderList(), m.renderDetailPopup(), m.width, m.height, 0)
 	default:
 		return m.renderList()
 	}
+}
+
+// renderDetailPopup shows the full, untruncated fields of the selected
+// transaction — mainly the description, which formatTxRow truncates to fit
+// the list's row width and real bank exports routinely run to hundreds of
+// characters (Verwendungszweck/Zahlungsreferenz text).
+func (m Model) renderDetailPopup() string {
+	t := m.detailTx
+	if t == nil {
+		return ""
+	}
+	w := m.importPopupWidth()
+	contentW := w - 6 // border(2) + padding(4), same budget as the import popup
+
+	amtStyle := styleIncome
+	if t.Amount < 0 {
+		amtStyle = styleExpense
+	}
+	cat := t.Category
+	if cat == "" {
+		cat = "(uncategorized)"
+	}
+	acct := t.Account
+	if acct == "" {
+		acct = "(none)"
+	}
+
+	// Budget the description/raw fields off the ACTUAL terminal height so a
+	// pathologically long field can't blow the popup past the screen the
+	// way the unbudgeted file-picker wrap once did. Fixed chrome (title,
+	// field rows, section headers, footer, border, padding) eats ~13 rows;
+	// whatever's left is split into wrapped lines at contentW, converted
+	// back to a character budget, and further split with Raw if it'll show.
+	hasRaw := t.Raw != "" && t.Raw != t.Description
+	fixedRows := 13
+	if t.Source != "" {
+		fixedRows++
+	}
+	if hasRaw {
+		fixedRows += 2 // "Raw:" header + its own blank separator line
+	}
+	availLines := m.height - fixedRows
+	if availLines < 2 {
+		availLines = 2
+	}
+	if hasRaw {
+		availLines /= 2
+	}
+	maxLen := min(400, availLines*contentW)
+	if maxLen < 80 {
+		maxLen = 80
+	}
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Transaction") + "\n\n")
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Date:", t.Date.Format("2006-01-02")))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Amount:", amtStyle.Render(fmt.Sprintf("%+.2f €", t.Amount))))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Category:", styleCategory.Render(cat)))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Account:", acct))
+	if t.Source != "" {
+		b.WriteString(fmt.Sprintf("  %-12s %s\n", "Source:", styleMuted.Render(t.Source)))
+	}
+	b.WriteString("\n  " + styleSummaryH.Render("Description:") + "\n")
+	b.WriteString("  " + wrapCapped(t.Description, contentW, maxLen) + "\n")
+	if hasRaw {
+		b.WriteString("\n  " + styleSummaryH.Render("Raw:") + "\n")
+		b.WriteString("  " + styleMuted.Render(wrapCapped(t.Raw, contentW, maxLen)) + "\n")
+	}
+	b.WriteString("\n" + styleMuted.Render("e: edit  ·  any other key: close"))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Width(w).
+		Render(b.String())
+}
+
+// wrapCapped truncates s to maxLen (with an ellipsis) before letting the
+// caller's outer lipgloss Width() word-wrap it, so a single field can never
+// produce an unbounded number of physical lines.
+func wrapCapped(s string, width, maxLen int) string {
+	if len([]rune(s)) > maxLen {
+		s = ansi.Truncate(s, maxLen, "…")
+	}
+	return s
 }
 
 // importPopupWidth is the fixed outer width of the import assistant's
@@ -1168,7 +1285,7 @@ func (m Model) renderList() string {
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ]:account  ?:help  q:quit")
+		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ]:account  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -1218,6 +1335,7 @@ func (m Model) helpContent() string {
 	b.WriteString(row("tab", "next month"))
 	b.WriteString(row("shift+tab", "previous month"))
 	b.WriteString(section("Entries"))
+	b.WriteString(row("enter", "view full details (untruncated description, source, raw row)"))
 	b.WriteString(row("n", "new entry (manual income/expense)"))
 	b.WriteString(row("i", "import CSV (N26, ING, DKB, generic) — t at preview: tag account"))
 	b.WriteString(row("e", "edit selected entry"))

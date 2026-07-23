@@ -713,3 +713,66 @@ func TestRenderSummary_OmitsTrendWithOneOrZeroMonths(t *testing.T) {
 		t.Errorf("expected no trend section with no history, got:\n%s", out)
 	}
 }
+
+func TestDetailPopup_EnterOpensAndShowsFullDescription(t *testing.T) {
+	longDesc := strings.Repeat("Verwendungszweck details that run on and on ", 5)
+	m := Model{
+		width: 100, height: 30,
+		txs: []models.Transaction{{Description: longDesc, Amount: -12.34, Account: "N26"}},
+	}
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+	if m.view != viewDetail {
+		t.Fatalf("expected 'enter' on a row to open viewDetail, got %v", m.view)
+	}
+	if m.detailTx == nil || m.detailTx.Description != longDesc {
+		t.Fatal("expected detailTx to hold the full, untruncated description")
+	}
+	popup := m.renderDetailPopup()
+	if !strings.Contains(popup, "Verwendungszweck details") {
+		t.Errorf("expected the popup to contain the description text, got:\n%s", popup)
+	}
+}
+
+func TestDetailPopup_EnterOnEmptyListDoesNothing(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+	if m.view != viewList {
+		t.Errorf("expected 'enter' with no transactions to do nothing, got view=%v", m.view)
+	}
+}
+
+func TestDetailPopup_AnyKeyCloses(t *testing.T) {
+	tx := models.Transaction{Description: "x", Amount: -1}
+	m := Model{width: 100, height: 30, txs: []models.Transaction{tx}, view: viewDetail, detailTx: &tx}
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(Model)
+	if m.view != viewList || m.detailTx != nil {
+		t.Errorf("expected esc to close the detail popup back to viewList, got view=%v detailTx=%v", m.view, m.detailTx)
+	}
+}
+
+func TestDetailPopup_EKeyJumpsToEdit(t *testing.T) {
+	tx := models.Transaction{Description: "Rewe", Amount: -12.34, Category: "groceries"}
+	m := Model{width: 100, height: 30, txs: []models.Transaction{tx}, view: viewDetail, detailTx: &tx}
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	m = mi.(Model)
+	if m.view != viewForm {
+		t.Fatalf("expected 'e' on the detail popup to open the edit form, got %v", m.view)
+	}
+	if m.editTx == nil || m.editTx.Description != "Rewe" {
+		t.Error("expected the edit form to be pre-filled from the detail transaction")
+	}
+	if cmd == nil {
+		t.Error("expected a command to focus the first form field")
+	}
+}
+
+func TestWrapCapped_TruncatesPathologicallyLongFields(t *testing.T) {
+	huge := strings.Repeat("x", 5000)
+	got := wrapCapped(huge, 70, 400)
+	if len([]rune(got)) > 401 { // 400 + the ellipsis rune
+		t.Errorf("expected wrapCapped to bound output to ~400 runes, got %d", len([]rune(got)))
+	}
+}
