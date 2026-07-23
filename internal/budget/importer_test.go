@@ -256,14 +256,19 @@ func TestSplitATFields(t *testing.T) {
 			"T-Mobile Austria GmbH", "Magenta Rechnung",
 		},
 		{
-			"no payee label, Verwendungszweck only",
+			"no payee label but a card purchase (Kartenfolge-Nr present) — merchant extracted from the purpose",
 			"Verwendungszweck: GRAZ MOBIL GRAZ 8010 Zahlungsreferenz: ePAYMENT 69,00 AT D1 Kartenfolge-Nr.: 1",
-			"", "GRAZ MOBIL GRAZ 8010",
+			"Graz Mobil Graz", "GRAZ MOBIL GRAZ 8010",
 		},
 		{
-			"no labels at all recognized, falls back to the whole blob",
+			"no labels at all recognized AND no Kartenfolge-Nr (not a card purchase) — falls back to the whole blob, no invented payee",
 			"SPAR 2361 D1 15.07. 08:57",
 			"", "SPAR 2361 D1 15.07. 08:57",
+		},
+		{
+			"genuine bank fee: no payee label, no Kartenfolge-Nr — must NOT be mistaken for a merchant",
+			"Zahlungsreferenz: Sollzinsen",
+			"", "Sollzinsen",
 		},
 		{
 			"short 'Empfänger:' label variant (Dauerauftrag)",
@@ -279,6 +284,35 @@ func TestSplitATFields(t *testing.T) {
 			}
 			if purpose != c.wantPurpose {
 				t.Errorf("purpose = %q, want %q", purpose, c.wantPurpose)
+			}
+		})
+	}
+}
+
+func TestExtractMerchant(t *testing.T) {
+	cases := []struct{ purpose, want string }{
+		{"APPLE.COM/BILL CORK UNKNOWN", "Apple"},
+		{"APPLE.COM/BILL CORK T23YK84", "Apple"},
+		{"AMAZON* NO7A827A4 LUXEMBOURG 1855", "Amazon"},
+		{"AMAZON.DE*I31204JS5 LUXEMBOURG L1855", "Amazon"},
+		{"PAYPAL *ADD TO BAL 35314369001 L2449", "PayPal"},
+		{"GOOGLE *CLOUD T52TS8 8888888888 D02 R296", "Google"},
+		{"KLARNA*VEEPEE STOCKHOLM 1010", "Klarna"},
+		{"AUDIBLE GMBH*2N9EO1955 BERLIN 10117", "Audible"},
+		{"MOONPAY 5068 AMSTERDAM 1017BZ", "MoonPay"},
+		// no '*' separator, no alias match — generic trailing-noise strip + title case
+		{"SPAR         2361  D1   26.06. 16:38", "Spar"},
+		{"MCDONALDS172 2360  D1   26.06. 11:49", "McDonald's"}, // alias match is prefix-based, so "MCDONALDS172" still matches
+		{"CINEPLEXX    2520  D1   05.07. 16:24", "Cineplexx"},
+		{"INTERSPAR    2361  D1   13.07. 13:45", "Interspar"},
+		// nothing left after stripping noise
+		{"12345 D1 01.01.", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.purpose, func(t *testing.T) {
+			if got := extractMerchant(c.purpose); got != c.want {
+				t.Errorf("extractMerchant(%q) = %q, want %q", c.purpose, got, c.want)
 			}
 		})
 	}

@@ -312,7 +312,70 @@ func splitATFields(blob string) (payee, purpose string) {
 	if purpose == "" {
 		purpose = clean(blob)
 	}
+	// Card purchases (POS/ePayment) have no Zahlungsempfänger/Auftraggeber
+	// label at all — the merchant name is just embedded as the first part
+	// of the purpose text instead, e.g. "APPLE.COM/BILL CORK UNKNOWN
+	// Zahlungsreferenz: ePAYMENT ... Kartenfolge-Nr.: 1". Every card-
+	// terminal descriptor in this bank's export carries "Kartenfolge-Nr."
+	// (card sequence number) — genuine fee/administrative lines (interest,
+	// account maintenance, failed-payment notices) never do, so it's a
+	// reliable gate that avoids misreading e.g. "Sollzinsen" as a merchant.
+	if payee == "" && strings.Contains(blob, "Kartenfolge-Nr") {
+		payee = extractMerchant(purpose)
+	}
 	return payee, purpose
+}
+
+// atMerchantAlias maps common brand identifiers (as they appear in payment
+// terminal descriptors) to a clean display name. Longer/more specific keys
+// must come before shorter ones they contain (e.g. "AMAZON.DE" before
+// "AMAZON") since matching is prefix-based on the merchant token.
+var atMerchantAlias = []struct{ prefix, name string }{
+	{"APPLE.COM", "Apple"}, {"APPLE", "Apple"},
+	{"AMAZON.DE", "Amazon"}, {"AMAZON", "Amazon"},
+	{"PAYPAL", "PayPal"},
+	{"GOOGLE", "Google"},
+	{"MCDONALDS", "McDonald's"},
+	{"KLARNA", "Klarna"},
+	{"AUDIBLE", "Audible"},
+	{"MOONPAY", "MoonPay"},
+}
+
+// atTrailingNoise matches a single token worth stripping off the end of a
+// merchant descriptor: store/reference numbers, card-terminal codes
+// (D1/K1/D02), dates, times.
+var atTrailingNoise = regexp.MustCompile(`^(?:\d+|[DK]\d+|\d{2}\.\d{2}\.?|\d{2}:\d{2}(?::\d{2})?|R\d+)$`)
+
+// extractMerchant best-effort cleans a card-purchase purpose string down to
+// just the merchant name: known international brands get a canonical name
+// via atMerchantAlias; anything else gets its trailing reference-number/
+// terminal-code/date/time noise stripped and is title-cased. Returns "" if
+// nothing usable is left.
+func extractMerchant(purpose string) string {
+	text := purpose
+	if i := strings.Index(text, "*"); i >= 0 {
+		text = text[:i]
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	upper := strings.ToUpper(text)
+	for _, a := range atMerchantAlias {
+		if strings.HasPrefix(upper, a.prefix) {
+			return a.name
+		}
+	}
+
+	tokens := strings.Fields(text)
+	for len(tokens) > 0 && atTrailingNoise.MatchString(tokens[len(tokens)-1]) {
+		tokens = tokens[:len(tokens)-1]
+	}
+	if len(tokens) == 0 {
+		return ""
+	}
+	return strings.Title(strings.ToLower(strings.Join(tokens, " ")))
 }
 
 // ── Generic CSV ───────────────────────────────────────────────────────────────
