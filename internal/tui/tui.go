@@ -11,6 +11,7 @@ import (
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
+	"github.com/aeon022/missionctl-core/overlay"
 	"github.com/aeon022/missionctl-core/theme"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -56,17 +57,17 @@ var (
 			Foreground(lipgloss.Color("15")).
 			Background(colorBlue).
 			Padding(0, 2)
-	styleTabInact   = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
-	styleDivider    = lipgloss.NewStyle().Foreground(colorSubtle)
-	styleHeader     = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleHelp       = lipgloss.NewStyle().Foreground(colorMuted)
-	styleErr        = lipgloss.NewStyle().Foreground(colorRed)
-	styleOK         = lipgloss.NewStyle().Foreground(colorGreen)
-	styleMuted      = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSelected   = lipgloss.NewStyle().
-				Background(theme.SelectedBg).
-				Foreground(theme.SelectedFg).
-				Bold(true)
+	styleTabInact = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
+	styleDivider  = lipgloss.NewStyle().Foreground(colorSubtle)
+	styleHeader   = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleHelp     = lipgloss.NewStyle().Foreground(colorMuted)
+	styleErr      = lipgloss.NewStyle().Foreground(colorRed)
+	styleOK       = lipgloss.NewStyle().Foreground(colorGreen)
+	styleMuted    = lipgloss.NewStyle().Foreground(colorMuted)
+	styleSelected = lipgloss.NewStyle().
+			Background(theme.SelectedBg).
+			Foreground(theme.SelectedFg).
+			Bold(true)
 	styleIncome    = lipgloss.NewStyle().Foreground(colorGreen)
 	styleExpense   = lipgloss.NewStyle().Foreground(colorRed)
 	styleCategory  = lipgloss.NewStyle().Foreground(colorAmber)
@@ -96,17 +97,17 @@ type Model struct {
 	width  int
 	height int
 
-	txs        []models.Transaction
-	cursor     int
-	months     []string // ["2026-06", "2026-05", ...]
-	activeTab  int      // index into months; -1 = all
-	summary    *models.Summary
-	goals      []models.GoalStatus
-	searchQ    string
-	searching  bool
+	txs         []models.Transaction
+	cursor      int
+	months      []string // ["2026-06", "2026-05", ...]
+	activeTab   int      // index into months; -1 = all
+	summary     *models.Summary
+	goals       []models.GoalStatus
+	searchQ     string
+	searching   bool
 	searchInput textinput.Model
-	filterCat  string
-	vp         viewport.Model
+	filterCat   string
+	vp          viewport.Model
 
 	// add/edit form
 	form    [fCount]textinput.Model
@@ -117,6 +118,11 @@ type Model struct {
 	categorizing bool
 	catInput     textinput.Model
 	deleteTarget *models.Transaction
+
+	// "?" transient help popup
+	helpVP   viewport.Model
+	helpPopW int
+	helpPopH int
 
 	status     string
 	statusTime time.Time
@@ -256,8 +262,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case "q", "esc", "?":
 				m.view = viewList
+				return m, nil
 			}
-			return m, nil
+			var cmd tea.Cmd
+			m.helpVP, cmd = m.helpVP.Update(msg)
+			return m, cmd
 		}
 	}
 
@@ -366,7 +375,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.Focus()
 		m.searchInput.SetValue("")
 	case "?":
-		m.view = viewHelp
+		m = m.openHelp()
 	case "n":
 		m.view = viewForm
 		m.editTx = nil
@@ -547,7 +556,10 @@ func (m Model) View() string {
 	case viewSummary:
 		return m.renderSummaryView()
 	case viewHelp:
-		return m.renderHelp()
+		// "?" is only reachable from the main list, so the list is always
+		// the correct background to keep visible behind the popup. No
+		// enclosing border on the list view, so inset 0 is safe.
+		return overlay.Center(m.renderList(), m.renderHelpPopup(), m.width, m.height, 0)
 	case viewForm:
 		return m.renderForm()
 	default:
@@ -688,7 +700,7 @@ func (m Model) renderForm() string {
 	return b.String()
 }
 
-func (m Model) renderHelp() string {
+func (m Model) helpContent() string {
 	keyw := func(k string) string { return styleHeader.Render(fmt.Sprintf("%-10s", k)) }
 	row := func(k, desc string) string { return "  " + keyw(k) + styleHelp.Render(desc) + "\n" }
 	section := func(t string) string { return "\n  " + styleSummaryH.Render(t) + "\n" }
@@ -715,6 +727,46 @@ func (m Model) renderHelp() string {
 	b.WriteString(row("q", "quit"))
 	b.WriteString("\n" + styleHelp.Render("  Import & categorize on the CLI: budgetctl import file.csv · budgetctl tag PATTERN --category NAME") + "\n")
 	return b.String()
+}
+
+// openHelp sizes and populates the transient help popup (see
+// renderHelpPopup/overlay.Center) from the ACTUAL rendered background
+// height, not the terminal size — budgetctl's list has no enclosing
+// border (inset 0 is safe), but the popup still shouldn't try to be
+// taller than what's actually on screen.
+func (m Model) openHelp() Model {
+	bg := m.renderList()
+	bgLines := strings.Split(bg, "\n")
+
+	safeH := max(6, len(bgLines))
+	popH := min(safeH, 22)
+	popW := min(70, m.width)
+	if popW < 40 {
+		popW = 40
+	}
+
+	vp := viewport.New(popW-4, popH-3) // border 1+1, padding(0,1) → 2 cols; -1 row for footer
+	vp.SetContent(m.helpContent())
+
+	m.helpVP = vp
+	m.helpPopW = popW
+	m.helpPopH = popH
+	m.view = viewHelp
+	return m
+}
+
+var stylePopupBorder = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorBlue).Padding(0, 1)
+
+// renderHelpPopup renders the help viewport in a bordered box, meant to be
+// composited over the list view via overlay.Center rather than replacing
+// the whole screen — the list stays visible around it.
+func (m Model) renderHelpPopup() string {
+	footer := "esc / ?  close"
+	if m.helpVP.TotalLineCount() > m.helpVP.Height {
+		footer = fmt.Sprintf("j/k scroll (%d%%)  ·  %s", int(m.helpVP.ScrollPercent()*100), footer)
+	}
+	body := m.helpVP.View() + "\n" + styleHelp.Render(footer)
+	return stylePopupBorder.Width(m.helpPopW).Render(body)
 }
 
 func (m Model) renderSummaryView() string {

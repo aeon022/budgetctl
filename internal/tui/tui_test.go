@@ -186,3 +186,53 @@ func TestDeleteConfirmCancel(t *testing.T) {
 		t.Fatalf("entry not deleted: %+v", m.txs)
 	}
 }
+
+func TestHelpOverlay_OpenScrollClose(t *testing.T) {
+	m := Model{width: 100, height: 30}
+
+	m, _ = typeKeys(t, m, "?")
+	if m.view != viewHelp {
+		t.Fatalf("expected viewHelp after '?', got %v", m.view)
+	}
+	if m.helpVP.TotalLineCount() == 0 {
+		t.Fatal("expected help content to be populated")
+	}
+
+	before := m.helpVP.ScrollPercent()
+	m, _ = typeKeys(t, m, "j", "j", "j", "j", "j")
+	if m.helpVP.ScrollPercent() <= before {
+		t.Errorf("expected scroll to advance after pressing j, stayed at %v", before)
+	}
+
+	m, _ = typeKeys(t, m, "esc")
+	if m.view != viewList {
+		t.Errorf("expected esc to close help back to viewList, got %v", m.view)
+	}
+}
+
+func TestHelpOverlay_FitsWithinBackgroundHeight(t *testing.T) {
+	// Regression guard: the popup must be sized from the actual rendered
+	// background, not just the raw terminal height — a short background
+	// (e.g. an empty transaction list) must not produce a popup taller
+	// than what's on screen.
+	m := Model{width: 100, height: 30}
+	m = m.openHelp()
+	bgLines := len(splitLinesForTest(m.renderList()))
+	if m.helpPopH > bgLines {
+		t.Errorf("popup height %d exceeds background height %d", m.helpPopH, bgLines)
+	}
+}
+
+func splitLinesForTest(s string) []string {
+	var lines []string
+	cur := ""
+	for _, r := range s {
+		if r == '\n' {
+			lines = append(lines, cur)
+			cur = ""
+			continue
+		}
+		cur += string(r)
+	}
+	return append(lines, cur)
+}

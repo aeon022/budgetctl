@@ -1,5 +1,5 @@
-github.com/aeon022/missionctl-core v0.0.0-20260723102914-aedb48f9aac9 h1:/M8Zs19zSpidLM+MBaRYlCkZAPxVMAucbaZOtYr7buo=
-github.com/aeon022/missionctl-core v0.0.0-20260723102914-aedb48f9aac9/go.mod h1:kZZ5AG6gsN1MN3+bVH+pnnnmn0uZi4LFJ1Af1sM98tA=
+github.com/aeon022/missionctl-core v0.0.0-20260723142303-c6bca2080f33 h1:iH0hwRwbrhfMHWrl14skfms73zTzbWAp1bbMgdrxbOs=
+github.com/aeon022/missionctl-core v0.0.0-20260723142303-c6bca2080f33/go.mod h1:Pz2jt23g0MLyQ1TXZxyXdRYWrQFC43dMAwOhQk/e9oo=
 github.com/anthropics/anthropic-sdk-go v1.57.0 h1:iEAcPbUKfJ2Iqz9uN/jEndCNW2+x7OYLHDidXDhPjI0=
 github.com/anthropics/anthropic-sdk-go v1.57.0/go.mod h1:3EfIfmFqxH6rbiLcIP4tPFyXL/IHakx2wDG4OU+TIEI=
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=
