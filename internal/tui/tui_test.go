@@ -483,14 +483,33 @@ func TestAccountTabHitTest_ClickSwitchesActiveAccount(t *testing.T) {
 	}
 }
 
-func TestAccountTabHitTest_NotShownWhenOnlyOneAccount(t *testing.T) {
-	// With <=1 account the tab row isn't rendered at all, so a click at that
-	// row must not be mistaken for an account-tab click.
+func TestAccountTabRow_ShownWithJustOneAccount(t *testing.T) {
+	// A single tagged account still gets a tab row — even though there's
+	// nothing to "switch" to yet, seeing "All | <account>" is the user's
+	// only visible confirmation that tagging actually worked. Hiding it
+	// until a 2nd account existed made a successful import look like it
+	// silently did nothing.
 	m := Model{width: 100, height: 20, accounts: []string{"N26"}, activeAccount: -1}
+	if !strings.Contains(m.renderList(), "N26") {
+		t.Error("expected the account tab row to render even with only one account")
+	}
+	// Clicking the (now-visible) "N26" tab should select it.
+	if i := m.accountTabHitTest(10, 3); i != 0 {
+		t.Errorf("expected clicking the N26 tab to hit account index 0, got %d", i)
+	}
+}
+
+func TestAccountTabRow_HiddenWithNoAccounts(t *testing.T) {
+	// With zero tagged accounts there's nothing to show — a click on that
+	// row must not be mistaken for an account-tab click.
+	m := Model{width: 100, height: 20, accounts: nil, activeAccount: -1}
+	if strings.Contains(m.renderList(), "All") {
+		t.Error("expected no account tab row (not even \"All\") with zero tagged accounts")
+	}
 	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	m = mi.(Model)
 	if m.activeAccount != -1 {
-		t.Errorf("expected no account-tab row with a single account, activeAccount changed to %d", m.activeAccount)
+		t.Errorf("expected a click on the (nonexistent) account-tab row to do nothing, activeAccount changed to %d", m.activeAccount)
 	}
 }
 

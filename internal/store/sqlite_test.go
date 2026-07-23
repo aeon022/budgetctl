@@ -272,3 +272,44 @@ func TestMonthlyTrend(t *testing.T) {
 		t.Errorf("expected limit to keep the 2 MOST RECENT months, oldest-first, got %+v", limited)
 	}
 }
+
+func TestDeleteAll(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	n26 := tx("n1", -10)
+	n26.Account = "N26"
+	ing := tx("i1", -20)
+	ing.Account = "ING"
+	for _, tr := range []*models.Transaction{n26, ing} {
+		if err := s.Upsert(ctx, tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Scoped to one account: only that account's rows go, the other survives.
+	n, err := s.DeleteAll(ctx, "N26")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row deleted for account N26, got %d", n)
+	}
+	remaining, _ := s.List(ctx, Filter{})
+	if len(remaining) != 1 || remaining[0].Account != "ING" {
+		t.Fatalf("expected only the ING transaction to survive, got %+v", remaining)
+	}
+
+	// Unscoped: everything goes.
+	n, err = s.DeleteAll(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 remaining row deleted, got %d", n)
+	}
+	remaining, _ = s.List(ctx, Filter{})
+	if len(remaining) != 0 {
+		t.Fatalf("expected no transactions left, got %+v", remaining)
+	}
+}

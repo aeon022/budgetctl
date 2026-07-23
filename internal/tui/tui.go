@@ -987,7 +987,7 @@ func (m Model) renderHeader(section string) string {
 // always lands on the row it visually appears to.
 func (m Model) listStartRow() int {
 	row := 4
-	if len(m.accounts) > 1 {
+	if len(m.accounts) > 0 {
 		row++
 	}
 	if m.searching {
@@ -1031,7 +1031,7 @@ func (m Model) tabHitTest(x, y int) int {
 // the returned index is offset by one internally so -1 ("All") is a valid hit.
 func (m Model) accountTabHitTest(x, y int) int {
 	const acctTabRow = 3 // header title(0) + rule(1) + month tabs(2) + account tabs(3)
-	if y != acctTabRow || len(m.accounts) <= 1 {
+	if y != acctTabRow || len(m.accounts) == 0 {
 		return -2
 	}
 	col := 0
@@ -1096,7 +1096,7 @@ func (m Model) renderList() string {
 	}
 
 	// ── account tab bar (only worth showing once there's more than one) ──
-	if len(m.accounts) > 1 {
+	if len(m.accounts) > 0 {
 		var aparts []string
 		labels := append([]string{"All"}, m.accounts...)
 		for i, label := range labels {
@@ -1168,7 +1168,7 @@ func (m Model) renderList() string {
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  [/]:account  ?:help  q:quit")
+		bar = styleHelp.Render("n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ]:account  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -1231,7 +1231,8 @@ func (m Model) helpContent() string {
 	b.WriteString("  " + styleHelp.Render("on transactions. It appears the first time you tag something with it:") + "\n")
 	b.WriteString("  " + styleHelp.Render("  · CLI:  budgetctl import file.csv --account \"Sparkasse\"") + "\n")
 	b.WriteString("  " + styleHelp.Render("  · TUI:  i → pick file → t (at preview) → type a name → enter") + "\n")
-	b.WriteString(row("[ / ]", "cycle accounts (tab/click also works, once 2+ exist)"))
+	b.WriteString("  " + styleHelp.Render("Redo a bad import: budgetctl reset --account \"Sparkasse\" (asks to confirm)") + "\n")
+	b.WriteString(row("[ / ]", "cycle accounts (tab/click also works)"))
 	b.WriteString(section("Other"))
 	b.WriteString(row("?", "toggle this help"))
 	b.WriteString(row("q", "quit"))
@@ -1297,7 +1298,7 @@ func (m Model) renderSummaryView() string {
 		b.WriteString(strings.Join(parts, "") + "\n")
 	}
 
-	if len(m.accounts) > 1 {
+	if len(m.accounts) > 0 {
 		var aparts []string
 		labels := append([]string{"All"}, m.accounts...)
 		for i, label := range labels {
@@ -1313,7 +1314,7 @@ func (m Model) renderSummaryView() string {
 	b.WriteString(styleDivider.Render(strings.Repeat("─", m.width)) + "\n")
 
 	vpH := m.height - 7
-	if len(m.accounts) > 1 {
+	if len(m.accounts) > 0 {
 		vpH--
 	}
 	m.vp.Height = vpH
@@ -1323,7 +1324,7 @@ func (m Model) renderSummaryView() string {
 	if m.vp.TotalLineCount() > m.vp.Height {
 		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
 	}
-	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  [/]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
+	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
 	return b.String()
 }
 

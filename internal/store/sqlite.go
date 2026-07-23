@@ -279,6 +279,25 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteAll removes every transaction, or every transaction for one
+// account when account is non-empty (e.g. to wipe a bad import and redo
+// it cleanly). Returns the number of rows removed. category_rules and
+// budget_goals are untouched — those aren't tied to any one account.
+func (s *Store) DeleteAll(ctx context.Context, account string) (int, error) {
+	q := `DELETE FROM transactions`
+	var args []any
+	if account != "" {
+		q += ` WHERE account=?`
+		args = append(args, account)
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 func (s *Store) SetCategory(ctx context.Context, id, category string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE transactions SET category=? WHERE id=?`, category, id)
