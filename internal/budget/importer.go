@@ -1,12 +1,14 @@
 package budget
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/csv"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +35,8 @@ func Import(path string) ([]models.Transaction, error) {
 		return parseING(f, filepath.Base(path))
 	case "dkb":
 		return parseDKB(f, filepath.Base(path))
+	case "at-umsatzliste":
+		return parseATUmsatzliste(f, filepath.Base(path))
 	default:
 		return parseGeneric(f, filepath.Base(path))
 	}
@@ -40,18 +44,30 @@ func Import(path string) ([]models.Transaction, error) {
 
 // ── Format detection ──────────────────────────────────────────────────────────
 
+// atUmsatzlisteStart matches the first data row of an Austrian bank
+// "Umsatzliste" export (e.g. Steiermärkische Sparkasse): no header row at
+// all, just DD.MM.YYYY;"quoted description"... straight from the first byte
+// (after an optional UTF-8 BOM).
+var atUmsatzlisteStart = regexp.MustCompile(`^\d{2}\.\d{2}\.\d{4};"`)
+
 func detectFormat(path string, f *os.File) string {
 	buf := make([]byte, 512)
 	n, _ := f.Read(buf)
-	header := strings.ToLower(string(buf[:n]))
+	raw := bytes.TrimPrefix(buf[:n], []byte{0xEF, 0xBB, 0xBF}) // UTF-8 BOM
+	header := strings.ToLower(string(raw))
 
 	switch {
 	case strings.Contains(header, "n26") || strings.Contains(path, "n26"):
 		return "n26"
-	case strings.Contains(header, "ing-diba") || strings.Contains(header, "ing "):
+	// "bank;ing" matches ING's actual preamble line ("Bank;ING ") — a bare
+	// "ing " substring is too loose and false-positives on ordinary text
+	// (e.g. a transaction description mentioning someone named "Wanting").
+	case strings.Contains(header, "ing-diba") || strings.Contains(header, "bank;ing"):
 		return "ing"
 	case strings.Contains(header, "dkb") || strings.Contains(header, "deutsche kreditbank"):
 		return "dkb"
+	case atUmsatzlisteStart.Match(raw):
+		return "at-umsatzliste"
 	default:
 		return "generic"
 	}
@@ -197,6 +213,52 @@ func parseDKB(r io.Reader, source string) ([]models.Transaction, error) {
 			Description: desc,
 			Amount:      amount,
 			Account:     "DKB",
+			Source:      source,
+			Raw:         raw,
+		})
+	}
+	return txs, nil
+}
+
+// ── Austrian bank "Umsatzliste" CSV ─────────────────────────────────────────────
+// No header row at all — straight data from byte 0 (after an optional UTF-8
+// BOM). 6 semicolon-separated columns:
+// Buchungsdatum;"description text";Valutadatum;Betrag;Währung;Timestamp
+// Date format: DD.MM.YYYY, amount uses German comma decimal.
+// Account is left unset (like the generic parser) since nothing in the file
+// identifies which bank/account it came from — tag it via the TUI import
+// assistant's "t" step or `budgetctl import --account`.
+
+func parseATUmsatzliste(r io.Reader, source string) ([]models.Transaction, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	rows, err := readCSV(bytes.NewReader(data), ';')
+	if err != nil {
+		return nil, err
+	}
+	var txs []models.Transaction
+	for _, row := range rows {
+		if len(row) < 4 {
+			continue
+		}
+		date, err := time.Parse("02.01.2006", strings.TrimSpace(row[0]))
+		if err != nil {
+			continue
+		}
+		desc := clean(row[1])
+		amount, err := parseAmountDE(row[3])
+		if err != nil {
+			continue
+		}
+		raw := strings.Join(row, ";")
+		txs = append(txs, models.Transaction{
+			ID:          txID(source, raw),
+			Date:        date,
+			Description: desc,
+			Amount:      amount,
 			Source:      source,
 			Raw:         raw,
 		})

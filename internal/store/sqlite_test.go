@@ -125,6 +125,39 @@ func TestSetCategoryAndSummary(t *testing.T) {
 	}
 }
 
+func TestSummaryMixedSignsWithinOneCategoryAreNotNetted(t *testing.T) {
+	// Regression test: category-level netting (GROUP BY category, then
+	// classify the NET as income-or-expense) silently swallowed income
+	// whenever a category's expenses outweighed its income — found with
+	// real imported bank data where an uncategorized P2P income row sat
+	// alongside much larger uncategorized expenses in the same month.
+	s := testStore(t)
+	ctx := context.Background()
+
+	expense := tx("e1", -2728.33) // Category "" by default via the tx() helper
+	if err := s.Upsert(ctx, expense); err != nil {
+		t.Fatal(err)
+	}
+	income := tx("i1", 183.00) // same "" category, net for the category is negative
+	if err := s.Upsert(ctx, income); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := s.Summary(ctx, "2026-07", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Income != 183.00 {
+		t.Errorf("expected income 183.00 to survive despite a larger expense in the same category, got %v", sum.Income)
+	}
+	if sum.Expenses != -2728.33 {
+		t.Errorf("expected expenses -2728.33, got %v", sum.Expenses)
+	}
+	if sum.Net != 183.00-2728.33 {
+		t.Errorf("expected net %v, got %v", 183.00-2728.33, sum.Net)
+	}
+}
+
 func TestSummaryFiltersByAccount(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

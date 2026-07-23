@@ -115,19 +115,18 @@ func (s *Store) List(ctx context.Context, f Filter) ([]models.Transaction, error
 }
 
 func (s *Store) Summary(ctx context.Context, month, account string) (*models.Summary, error) {
-	q := `SELECT category, SUM(amount) FROM transactions WHERE 1=1`
+	where := ` WHERE 1=1`
 	var args []any
 	if month != "" {
-		q += ` AND date LIKE ?`
+		where += ` AND date LIKE ?`
 		args = append(args, month+"%")
 	}
 	if account != "" {
-		q += ` AND account=?`
+		where += ` AND account=?`
 		args = append(args, account)
 	}
-	q += ` GROUP BY category`
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT category, SUM(amount) FROM transactions`+where+` GROUP BY category`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -144,14 +143,27 @@ func (s *Store) Summary(ctx context.Context, month, account string) (*models.Sum
 			return nil, err
 		}
 		sum.ByCategory[cat] = total
-		if total > 0 {
-			sum.Income += total
-		} else {
-			sum.Expenses += total
-		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Income/Expenses are summed per-TRANSACTION sign, not per-category net —
+	// a single category (esp. "" uncategorized) routinely holds both income
+	// and expense rows, and netting them at the category level before
+	// classifying would silently swallow whichever direction lost.
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(amount),0) FROM transactions`+where+` AND amount > 0`, args...,
+	).Scan(&sum.Income); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(amount),0) FROM transactions`+where+` AND amount < 0`, args...,
+	).Scan(&sum.Expenses); err != nil {
+		return nil, err
 	}
 	sum.Net = sum.Income + sum.Expenses
-	return sum, rows.Err()
+	return sum, nil
 }
 
 func (s *Store) ListMonths(ctx context.Context) ([]string, error) {

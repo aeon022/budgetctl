@@ -3,6 +3,7 @@ package budget
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aeon022/budgetctl/internal/models"
@@ -191,6 +192,36 @@ func TestTxIDStable(t *testing.T) {
 	}
 	if a == txID("other.csv", "row") {
 		t.Error("txID must differ for different sources")
+	}
+}
+
+func TestImportATUmsatzliste(t *testing.T) {
+	// Real-world shape of an Austrian bank "Umsatzliste" export (e.g.
+	// Steiermärkische Sparkasse): NO header row at all, ';'-delimited,
+	// UTF-8 BOM, German comma decimals. Every field-name-based header
+	// detection (parseGeneric) fails on this by construction — there is no
+	// header — so it needs its own dedicated parser.
+	csv := "\xef\xbb\xbf" +
+		"01.06.2026;\"Verwendungszweck: WIN2DAY WIEN 1030 Zahlungsreferenz: ePAYMENT 30,00 AT\";29.05.2026;-30,00;EUR;01.06.2026 06:29:24:070\n" +
+		"21.07.2026;\"Auftraggeber: Wanting Shi-Weiher Zahlungsreferenz: lunch and dinner\";21.07.2026;183,00;EUR;21.07.2026 09:31:12:638\n"
+	txs, err := Import(writeTemp(t, "Umsatzliste_AT163800000007631146.csv", csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txs) != 2 {
+		t.Fatalf("want 2 transactions, got %d", len(txs))
+	}
+	if txs[0].Amount != -30.00 {
+		t.Errorf("want amount -30.00, got %v", txs[0].Amount)
+	}
+	if txs[0].Date.Format("2006-01-02") != "2026-06-01" {
+		t.Errorf("unexpected date: %v", txs[0].Date)
+	}
+	if !strings.Contains(txs[0].Description, "WIN2DAY") {
+		t.Errorf("expected description to contain the raw Verwendungszweck text, got %q", txs[0].Description)
+	}
+	if txs[1].Amount != 183.00 {
+		t.Errorf("want amount 183.00 (income), got %v", txs[1].Amount)
 	}
 }
 
