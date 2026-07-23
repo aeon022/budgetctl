@@ -220,3 +220,55 @@ func TestListAccounts(t *testing.T) {
 		}
 	}
 }
+
+func TestMonthlyTrend(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	dated := func(id string, month string, amount float64) *models.Transaction {
+		tr := tx(id, amount)
+		d, err := time.Parse("2006-01-02", month+"-15")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr.Date = d
+		return tr
+	}
+	for _, tr := range []*models.Transaction{
+		dated("m1", "2026-05", -100),
+		dated("m2", "2026-05", 500),
+		dated("m3", "2026-06", -50),
+		dated("m4", "2026-07", -20),
+		dated("m5", "2026-07", 300),
+	} {
+		if err := s.Upsert(ctx, tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	points, err := s.MonthlyTrend(ctx, "", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 3 {
+		t.Fatalf("expected 3 months of data, got %d: %+v", len(points), points)
+	}
+	// oldest-first ordering
+	if points[0].Month != "2026-05" || points[len(points)-1].Month != "2026-07" {
+		t.Errorf("expected oldest-first ordering, got %+v", points)
+	}
+	if points[0].Income != 500 || points[0].Expenses != -100 || points[0].Net != 400 {
+		t.Errorf("unexpected May point: %+v", points[0])
+	}
+	if points[2].Income != 300 || points[2].Expenses != -20 || points[2].Net != 280 {
+		t.Errorf("unexpected July point: %+v", points[2])
+	}
+
+	limited, err := s.MonthlyTrend(ctx, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 2 || limited[0].Month != "2026-06" || limited[1].Month != "2026-07" {
+		t.Errorf("expected limit to keep the 2 MOST RECENT months, oldest-first, got %+v", limited)
+	}
+}

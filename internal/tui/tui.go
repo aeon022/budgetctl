@@ -107,6 +107,7 @@ type txLoadedMsg struct {
 	accounts []string
 	sum      *models.Summary
 	goals    []models.GoalStatus
+	trend    []models.MonthlyPoint
 }
 type errMsg struct{ err error }
 type txSavedMsg struct{ err error }
@@ -135,6 +136,7 @@ type Model struct {
 	activeAccount int      // index into accounts; -1 = all
 	summary       *models.Summary
 	goals         []models.GoalStatus
+	trend         []models.MonthlyPoint
 	searchQ       string
 	searching     bool
 	searchInput   textinput.Model
@@ -256,6 +258,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.txs = msg.txs
 		m.summary = msg.sum
 		m.goals = msg.goals
+		m.trend = msg.trend
 		if len(msg.months) > 0 {
 			m.months = msg.months
 		}
@@ -267,7 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(m.txs)-1)
 		}
 		if m.view == viewSummary && m.summary != nil {
-			m.vp.SetContent(renderSummary(m.summary, m.goals, m.width))
+			m.vp.SetContent(renderSummary(m.summary, m.goals, m.trend, m.width))
 		}
 
 	case errMsg:
@@ -611,7 +614,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = max(0, len(m.txs)-1)
 	case "S", "s":
 		m.view = viewSummary
-		m.vp.SetContent(renderSummary(m.summary, m.goals, m.width))
+		m.vp.SetContent(renderSummary(m.summary, m.goals, m.trend, m.width))
 		m.vp.GotoTop()
 	case "/":
 		m.searching = true
@@ -1324,7 +1327,7 @@ func (m Model) renderSummaryView() string {
 	return b.String()
 }
 
-func renderSummary(sum *models.Summary, goals []models.GoalStatus, width int) string {
+func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []models.MonthlyPoint, width int) string {
 	if sum == nil {
 		return "No data for this month."
 	}
@@ -1342,6 +1345,18 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, width int) st
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Income:", incomeColor.Render(fmt.Sprintf("%+.2f €", sum.Income))))
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Expenses:", expColor.Render(fmt.Sprintf("%+.2f €", sum.Expenses))))
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Net:", netColor.Render(fmt.Sprintf("%+.2f €", sum.Net))))
+
+	if len(trend) > 1 {
+		b.WriteString("\n  " + styleSummaryH.Render(fmt.Sprintf("Trend (last %d months):", len(trend))) + "\n\n")
+		var nets []float64
+		var labels []string
+		for _, p := range trend {
+			nets = append(nets, p.Net)
+			labels = append(labels, p.Month)
+		}
+		b.WriteString("  " + sparkline(nets) + "  " + styleMuted.Render(fmt.Sprintf("(%s → %s)", labels[0], labels[len(labels)-1])) + "\n")
+	}
+
 	b.WriteString("\n  " + styleSummaryH.Render("By category:") + "\n\n")
 
 	type kv struct {
@@ -1477,7 +1492,9 @@ func loadCmd(month, query, account string) tea.Cmd {
 		// budget goal like "dining < 200€" isn't naturally per-account)
 		goals, _ := s.GoalStatuses(ctx, month)
 
-		return txLoadedMsg{txs: txs, months: months, accounts: accounts, sum: sum, goals: goals}
+		trend, _ := s.MonthlyTrend(ctx, account, 6)
+
+		return txLoadedMsg{txs: txs, months: months, accounts: accounts, sum: sum, goals: goals, trend: trend}
 	}
 }
 
@@ -1549,6 +1566,46 @@ func abs(f float64) float64 {
 		return -f
 	}
 	return f
+}
+
+// sparklineChars are the 8 block-height levels used by sparkline, low to high.
+var sparklineChars = []rune("▁▂▃▄▅▆▇█")
+
+// sparkline renders values as a compact one-line bar chart, one character
+// per value, height-scaled to the min/max of the series and colored green
+// (positive) or red (negative). Each character is rendered with its own
+// merged style rather than wrapping the whole line in one Render() call —
+// nesting styled Render() output inside another Render() call silently
+// resets everything after the inner segment (every Render() call ends with
+// a full SGR reset), a bug found and fixed the hard way in habctl earlier.
+func sparkline(values []float64) string {
+	if len(values) == 0 {
+		return ""
+	}
+	minV, maxV := values[0], values[0]
+	for _, v := range values {
+		if v < minV {
+			minV = v
+		}
+		if v > maxV {
+			maxV = v
+		}
+	}
+	rangeV := maxV - minV
+
+	var b strings.Builder
+	for _, v := range values {
+		idx := len(sparklineChars) / 2
+		if rangeV > 0 {
+			idx = int((v - minV) / rangeV * float64(len(sparklineChars)-1))
+		}
+		style := styleIncome
+		if v < 0 {
+			style = styleExpense
+		}
+		b.WriteString(style.Render(string(sparklineChars[idx])))
+	}
+	return b.String()
 }
 
 func max(a, b int) int {

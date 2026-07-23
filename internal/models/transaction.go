@@ -19,9 +19,17 @@ type CategoryRule struct {
 }
 
 type Summary struct {
+	Month      string
+	Income     float64
+	Expenses   float64
+	Net        float64
+	ByCategory map[string]float64
+}
+
+// MonthlyPoint is one point in a multi-month trend (Store.MonthlyTrend).
+type MonthlyPoint struct {
 	Month    string
 	Income   float64
 	Expenses float64
 	Net      float64
-	ByCategory map[string]float64
 }

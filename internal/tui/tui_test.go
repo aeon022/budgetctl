@@ -12,6 +12,8 @@ import (
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/spf13/viper"
 )
 
@@ -609,5 +611,86 @@ func TestImportPickFile_LongFileNamesDoNotOverflowPopup(t *testing.T) {
 	lines := strings.Split(m.renderImportPopup(), "\n")
 	if len(lines) > m.height {
 		t.Errorf("import popup is %d lines tall, exceeds terminal height %d — footer/nav keys would be clipped", len(lines), m.height)
+	}
+}
+
+func TestSparkline_ScalesToMinMax(t *testing.T) {
+	out := sparkline([]float64{100, -50, 500, 0})
+	runes := []rune(stripANSI(out))
+	if len(runes) != 4 {
+		t.Fatalf("expected 4 spark characters, got %d: %q", len(runes), out)
+	}
+	// 500 is the max of the series → tallest bar (index 2, full block).
+	if runes[2] != '█' {
+		t.Errorf("expected the max value to render as the tallest bar (█), got %q", runes[2])
+	}
+	// -50 is the min of the series → shortest bar.
+	if runes[1] != '▁' {
+		t.Errorf("expected the min value to render as the shortest bar (▁), got %q", runes[1])
+	}
+}
+
+func TestSparkline_ColorsBySign(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+
+	// Single-value slices avoid the min==max degenerate case ambiguity and
+	// make the expected spark char (the series midpoint, ▅) unambiguous.
+	positive := sparkline([]float64{50})
+	negative := sparkline([]float64{-50})
+	if positive != styleIncome.Render(string(sparklineChars[len(sparklineChars)/2])) {
+		t.Errorf("expected a lone positive value styled with styleIncome, got %q", positive)
+	}
+	if negative != styleExpense.Render(string(sparklineChars[len(sparklineChars)/2])) {
+		t.Errorf("expected a lone negative value styled with styleExpense, got %q", negative)
+	}
+}
+
+func TestSparkline_EmptyInputDoesNotPanic(t *testing.T) {
+	if got := sparkline(nil); got != "" {
+		t.Errorf("expected empty string for no data points, got %q", got)
+	}
+}
+
+func stripANSI(s string) string {
+	var b strings.Builder
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func TestRenderSummary_IncludesTrendWhenMultipleMonths(t *testing.T) {
+	sum := &models.Summary{Month: "2026-07", Income: 100, Expenses: -50, Net: 50, ByCategory: map[string]float64{}}
+	trend := []models.MonthlyPoint{
+		{Month: "2026-06", Net: -10},
+		{Month: "2026-07", Net: 50},
+	}
+	out := renderSummary(sum, nil, trend, 100)
+	if !strings.Contains(out, "Trend (last 2 months)") {
+		t.Errorf("expected a trend section for a 2-month history, got:\n%s", out)
+	}
+}
+
+func TestRenderSummary_OmitsTrendWithOneOrZeroMonths(t *testing.T) {
+	sum := &models.Summary{Month: "2026-07", Income: 100, Expenses: -50, Net: 50, ByCategory: map[string]float64{}}
+	out := renderSummary(sum, nil, []models.MonthlyPoint{{Month: "2026-07", Net: 50}}, 100)
+	if strings.Contains(out, "Trend (") {
+		t.Errorf("expected no trend section with only 1 month of history, got:\n%s", out)
+	}
+	out = renderSummary(sum, nil, nil, 100)
+	if strings.Contains(out, "Trend (") {
+		t.Errorf("expected no trend section with no history, got:\n%s", out)
 	}
 }

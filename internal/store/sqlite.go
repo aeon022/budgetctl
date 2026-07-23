@@ -184,6 +184,50 @@ func (s *Store) ListMonths(ctx context.Context) ([]string, error) {
 	return months, rows.Err()
 }
 
+// MonthlyTrend returns per-transaction-sign income/expenses/net for the
+// most recent `limit` months that have any data, oldest first (so callers
+// can render it left-to-right as a trend). account filters to one account
+// when non-empty, like Summary/List.
+func (s *Store) MonthlyTrend(ctx context.Context, account string, limit int) ([]models.MonthlyPoint, error) {
+	where := ` WHERE 1=1`
+	var args []any
+	if account != "" {
+		where += ` AND account=?`
+		args = append(args, account)
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT substr(date,1,7) as month,
+		       COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0)
+		FROM transactions`+where+`
+		GROUP BY month
+		ORDER BY month DESC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []models.MonthlyPoint
+	for rows.Next() {
+		var p models.MonthlyPoint
+		if err := rows.Scan(&p.Month, &p.Income, &p.Expenses); err != nil {
+			return nil, err
+		}
+		p.Net = p.Income + p.Expenses
+		points = append(points, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(points)-1; i < j; i, j = i+1, j-1 {
+		points[i], points[j] = points[j], points[i]
+	}
+	return points, nil
+}
+
 func (s *Store) ListAccounts(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT account FROM transactions WHERE account != '' ORDER BY account`)
