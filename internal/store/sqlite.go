@@ -96,7 +96,7 @@ type Filter struct {
 }
 
 func (s *Store) List(ctx context.Context, f Filter) ([]models.Transaction, error) {
-	q := `SELECT id,date,payee,description,amount,category,account,source FROM transactions WHERE 1=1`
+	q := `SELECT id,date,payee,description,amount,category,account,source,raw FROM transactions WHERE 1=1`
 	var args []any
 	if f.Month != "" {
 		q += ` AND date LIKE ?`
@@ -453,7 +453,7 @@ func scanTx(rows *sql.Rows) ([]models.Transaction, error) {
 		var t models.Transaction
 		var dateStr string
 		if err := rows.Scan(&t.ID, &dateStr, &t.Payee, &t.Description, &t.Amount,
-			&t.Category, &t.Account, &t.Source); err != nil {
+			&t.Category, &t.Account, &t.Source, &t.Raw); err != nil {
 			return nil, err
 		}
 		t.Date, _ = time.Parse("2006-01-02", dateStr)

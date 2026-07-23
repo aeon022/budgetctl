@@ -64,6 +64,30 @@ func TestUpsertAndList_RoundTripsPayee(t *testing.T) {
 	}
 }
 
+func TestUpsertAndList_RoundTripsRaw(t *testing.T) {
+	// Regression test: List()'s SELECT never included the "raw" column, so
+	// every transaction loaded through the TUI (List is what backs it) had
+	// Raw="" even though it was stored correctly — silently disabling the
+	// detail popup's "Raw:" fallback section for terse transactions where
+	// it's the only way to double-check nothing was dropped during import.
+	s := testStore(t)
+	ctx := context.Background()
+
+	entry := tx("t1", -89.84)
+	entry.Description = "Nicht-Durchführung elektronisch"
+	entry.Raw = "30.06.2026;Zahlungsreferenz: Nicht-Durchführung elektronisch;01.07.2026;-89,84;EUR;30.06.2026 20:42:51:745"
+	if err := s.Upsert(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.List(ctx, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Raw != entry.Raw {
+		t.Fatalf("expected raw to round-trip through Upsert/List, got %+v", got)
+	}
+}
+
 func TestMigrate_AddingPayeeColumnIsIdempotent(t *testing.T) {
 	// Regression guard: payee was added to an already-shipped schema via
 	// ALTER TABLE, not baked into CREATE TABLE IF NOT EXISTS — opening the
