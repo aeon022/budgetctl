@@ -11,6 +11,7 @@ import (
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
+	"github.com/aeon022/missionctl-core/theme"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,12 +43,14 @@ var formLabels = [fCount]string{"Date", "Description", "Amount", "Category"}
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 var (
-	colorBlue   = lipgloss.AdaptiveColor{Light: "25",  Dark: "33"}
-	colorGreen  = lipgloss.AdaptiveColor{Light: "28",  Dark: "42"}
-	colorRed    = lipgloss.AdaptiveColor{Light: "160", Dark: "203"}
-	colorMuted  = lipgloss.AdaptiveColor{Light: "243", Dark: "246"}
-	colorSubtle = lipgloss.AdaptiveColor{Light: "250", Dark: "244"}
-	colorAmber  = lipgloss.AdaptiveColor{Light: "214", Dark: "220"}
+	// Shared across the suite via missionctl-core/theme — keeping the local
+	// names so every existing style reference below stays unchanged.
+	colorBlue   = theme.Blue
+	colorGreen  = theme.Green
+	colorRed    = theme.Red
+	colorMuted  = theme.Muted
+	colorSubtle = theme.Subtle
+	colorAmber  = theme.Amber
 
 	styleTabActive = lipgloss.NewStyle().Bold(true).
 			Foreground(lipgloss.Color("15")).
@@ -61,8 +64,8 @@ var (
 	styleOK         = lipgloss.NewStyle().Foreground(colorGreen)
 	styleMuted      = lipgloss.NewStyle().Foreground(colorMuted)
 	styleSelected   = lipgloss.NewStyle().
-				Background(lipgloss.AdaptiveColor{Light: "189", Dark: "17"}).
-				Foreground(lipgloss.AdaptiveColor{Light: "16",  Dark: "255"}).
+				Background(theme.SelectedBg).
+				Foreground(theme.SelectedFg).
 				Bold(true)
 	styleIncome    = lipgloss.NewStyle().Foreground(colorGreen)
 	styleExpense   = lipgloss.NewStyle().Foreground(colorRed)

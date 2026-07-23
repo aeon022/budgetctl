@@ -1,8 +1,9 @@
 module github.com/aeon022/budgetctl
 
-go 1.26.4
+go 1.26.5
 
 require (
+	github.com/aeon022/missionctl-core v0.0.0-20260723102914-aedb48f9aac9
 	github.com/anthropics/anthropic-sdk-go v1.57.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
