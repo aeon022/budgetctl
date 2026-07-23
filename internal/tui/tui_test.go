@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/aeon022/budgetctl/internal/budget"
@@ -146,7 +147,7 @@ func TestEditFlow(t *testing.T) {
 	_ = s.Close()
 
 	// load list
-	m = feed(t, m, loadCmd("", ""))
+	m = feed(t, m, loadCmd("", "", ""))
 	if len(m.txs) != 0 {
 		t.Fatalf("expected empty list, got %d", len(m.txs))
 	}
@@ -162,7 +163,7 @@ func TestDeleteConfirmCancel(t *testing.T) {
 	m, _ = typeKeys(t, m, "Temp", "enter")
 	m, cmd := typeKeys(t, m, "-1", "enter", "enter")
 	m = feed(t, m, cmd)
-	m = feed(t, m, loadCmd("", ""))
+	m = feed(t, m, loadCmd("", "", ""))
 	if len(m.txs) != 1 {
 		t.Fatalf("setup failed: %d txs", len(m.txs))
 	}
@@ -184,7 +185,7 @@ func TestDeleteConfirmCancel(t *testing.T) {
 		t.Fatal("y must trigger delete command")
 	}
 	m = feed(t, m, cmd)
-	m = feed(t, m, loadCmd("", ""))
+	m = feed(t, m, loadCmd("", "", ""))
 	if len(m.txs) != 0 {
 		t.Fatalf("entry not deleted: %+v", m.txs)
 	}
@@ -421,5 +422,135 @@ func TestImportAssistant_DoneStepAnyKeyClosesAndRefreshesList(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("expected closing to trigger a list reload")
+	}
+}
+
+func TestCycleAccount_WrapsThroughAllPlusEachAccount(t *testing.T) {
+	// n=2 accounts → valid indices are -1 (All), 0, 1.
+	cases := []struct {
+		active, dir, want int
+	}{
+		{-1, 1, 0},
+		{0, 1, 1},
+		{1, 1, -1}, // wraps past the last account back to "All"
+		{-1, -1, 1},
+		{1, -1, 0},
+		{0, -1, -1},
+	}
+	for _, c := range cases {
+		got := cycleAccount(c.active, 2, c.dir)
+		if got != c.want {
+			t.Errorf("cycleAccount(%d, 2, %d) = %d, want %d", c.active, c.dir, got, c.want)
+		}
+	}
+}
+
+func TestAccountTab_KeyCyclesActiveAccount(t *testing.T) {
+	m := Model{width: 100, height: 20, accounts: []string{"N26", "ING"}, activeAccount: -1}
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	m = mi.(Model)
+	if m.activeAccount != 0 {
+		t.Errorf("expected ']' to move from All to account 0, got %d", m.activeAccount)
+	}
+	if cmd == nil {
+		t.Error("expected a load command after cycling account")
+	}
+
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	m = mi.(Model)
+	if m.activeAccount != -1 {
+		t.Errorf("expected '[' to move back to All, got %d", m.activeAccount)
+	}
+}
+
+func TestAccountTabHitTest_ClickSwitchesActiveAccount(t *testing.T) {
+	m := Model{width: 100, height: 20, accounts: []string{"N26", "ING"}, activeAccount: -1}
+
+	// account tab row is row 3 (title, rule, month tabs, account tabs);
+	// "All" occupies the leftmost columns, so a click near x=10 should hit it,
+	// and a click further right should hit "N26".
+	mi, cmd := m.Update(tea.MouseMsg{X: 10, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = mi.(Model)
+	if m.activeAccount != 0 {
+		t.Errorf("expected click on second account tab to select account 0 (N26), got %d", m.activeAccount)
+	}
+	if cmd == nil {
+		t.Error("expected a load command after switching accounts via click")
+	}
+}
+
+func TestAccountTabHitTest_NotShownWhenOnlyOneAccount(t *testing.T) {
+	// With <=1 account the tab row isn't rendered at all, so a click at that
+	// row must not be mistaken for an account-tab click.
+	m := Model{width: 100, height: 20, accounts: []string{"N26"}, activeAccount: -1}
+	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = mi.(Model)
+	if m.activeAccount != -1 {
+		t.Errorf("expected no account-tab row with a single account, activeAccount changed to %d", m.activeAccount)
+	}
+}
+
+func TestImportAssistant_AccountAutoDetectedFromParsedTransactions(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+
+	parsed := []models.Transaction{{Description: "Rewe", Amount: -42.30, Account: "N26"}}
+	mi, _ := m.Update(importParsedMsg{txs: parsed})
+	m = mi.(Model)
+	if got := m.importAcctInput.Value(); got != "N26" {
+		t.Errorf("expected account input pre-filled with detected account N26, got %q", got)
+	}
+}
+
+func TestImportAssistant_AccountTagAppliedOnImport(t *testing.T) {
+	viper.Set("db_path", t.TempDir()+"/budget.db")
+	defer viper.Set("db_path", "")
+
+	csvPath := t.TempDir() + "/export.csv"
+	if err := os.WriteFile(csvPath, []byte("Date,Description,Amount\n2026-07-20,Coffee Shop,-4.50\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+	m.importStep = importPreview
+	m.importPath = csvPath
+	m.importParsed = []models.Transaction{{Description: "Coffee Shop", Amount: -4.50}}
+
+	// 't' enters edit mode, type a custom account tag, 'enter' exits edit
+	// mode, a second 'enter' actually runs the import.
+	m, _ = typeKeys(t, m, "t", "m", "y", "a", "c", "c", "o", "u", "n", "t", "enter")
+	if m.importEditingAcct {
+		t.Fatal("expected first enter to exit account-edit mode")
+	}
+	if got := m.importAcctInput.Value(); got != "myaccount" {
+		t.Fatalf("expected typed account tag 'myaccount', got %q", got)
+	}
+
+	var cmd tea.Cmd
+	m, cmd = typeKeys(t, m, "enter")
+	if cmd == nil {
+		t.Fatal("expected the second enter to trigger the import command")
+	}
+	m = feed(t, m, cmd)
+	if m.importErr != nil {
+		t.Fatalf("unexpected import error: %v", m.importErr)
+	}
+
+	s, err := store.New(config.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	txs, err := s.List(context.Background(), store.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txs) != 1 {
+		t.Fatalf("expected 1 imported transaction, got %d", len(txs))
+	}
+	if txs[0].Account != "myaccount" {
+		t.Errorf("expected imported transaction tagged with account 'myaccount', got %q", txs[0].Account)
 	}
 }

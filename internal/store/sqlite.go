@@ -114,12 +114,16 @@ func (s *Store) List(ctx context.Context, f Filter) ([]models.Transaction, error
 	return scanTx(rows)
 }
 
-func (s *Store) Summary(ctx context.Context, month string) (*models.Summary, error) {
+func (s *Store) Summary(ctx context.Context, month, account string) (*models.Summary, error) {
 	q := `SELECT category, SUM(amount) FROM transactions WHERE 1=1`
 	var args []any
 	if month != "" {
 		q += ` AND date LIKE ?`
 		args = append(args, month+"%")
+	}
+	if account != "" {
+		q += ` AND account=?`
+		args = append(args, account)
 	}
 	q += ` GROUP BY category`
 
@@ -326,7 +330,7 @@ func (s *Store) GoalStatuses(ctx context.Context, month string) ([]models.GoalSt
 	if err != nil {
 		return nil, err
 	}
-	sum, err := s.Summary(ctx, month)
+	sum, err := s.Summary(ctx, month, "") // goals are budgeted across all accounts combined
 	if err != nil {
 		return nil, err
 	}

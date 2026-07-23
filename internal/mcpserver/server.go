@@ -47,6 +47,7 @@ func toolSummary() mcp.Tool {
 	return mcp.NewTool("budget_summary",
 		mcp.WithDescription("Monthly income/expense summary with category breakdown. Great for AI analysis of spending patterns."),
 		mcp.WithString("month", mcp.Description("Month (YYYY-MM, default: current month)")),
+		mcp.WithString("account", mcp.Description("Filter to one account (e.g. \"N26\"), default: all accounts combined")),
 	)
 }
 
@@ -138,6 +139,7 @@ func handleSummary(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRes
 	if month == "" {
 		month = time.Now().Format("2006-01")
 	}
+	account := req.GetString("account", "")
 
 	s, err := store.New(config.DBPath())
 	if err != nil {
@@ -145,13 +147,17 @@ func handleSummary(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRes
 	}
 	defer s.Close()
 
-	sum, err := s.Summary(context.Background(), month)
+	sum, err := s.Summary(context.Background(), month, account)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Budget summary for %s:\n\n", month))
+	if account != "" {
+		b.WriteString(fmt.Sprintf("Budget summary for %s (account: %s):\n\n", month, account))
+	} else {
+		b.WriteString(fmt.Sprintf("Budget summary for %s:\n\n", month))
+	}
 	b.WriteString(fmt.Sprintf("Income:   %+.2f €\n", sum.Income))
 	b.WriteString(fmt.Sprintf("Expenses: %+.2f €\n", sum.Expenses))
 	b.WriteString(fmt.Sprintf("Net:      %+.2f €\n\n", sum.Net))

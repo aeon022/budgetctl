@@ -72,17 +72,22 @@ var (
 			Foreground(lipgloss.Color("15")).
 			Background(colorBlue).
 			Padding(0, 2)
-	styleTabInact = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
-	styleDivider  = lipgloss.NewStyle().Foreground(colorSubtle)
-	styleHeader   = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleHelp     = lipgloss.NewStyle().Foreground(colorMuted)
-	styleErr      = lipgloss.NewStyle().Foreground(colorRed)
-	styleOK       = lipgloss.NewStyle().Foreground(colorGreen)
-	styleMuted    = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSelected = lipgloss.NewStyle().
-			Background(theme.SelectedBg).
-			Foreground(theme.SelectedFg).
-			Bold(true)
+	styleTabInact      = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
+	styleAcctTabActive = lipgloss.NewStyle().Bold(true).
+				Foreground(lipgloss.Color("15")).
+				Background(colorGreen).
+				Padding(0, 2)
+	styleAcctTabInact = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
+	styleDivider      = lipgloss.NewStyle().Foreground(colorSubtle)
+	styleHeader       = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleHelp         = lipgloss.NewStyle().Foreground(colorMuted)
+	styleErr          = lipgloss.NewStyle().Foreground(colorRed)
+	styleOK           = lipgloss.NewStyle().Foreground(colorGreen)
+	styleMuted        = lipgloss.NewStyle().Foreground(colorMuted)
+	styleSelected     = lipgloss.NewStyle().
+				Background(theme.SelectedBg).
+				Foreground(theme.SelectedFg).
+				Bold(true)
 	styleIncome    = lipgloss.NewStyle().Foreground(colorGreen)
 	styleExpense   = lipgloss.NewStyle().Foreground(colorRed)
 	styleCategory  = lipgloss.NewStyle().Foreground(colorAmber)
@@ -96,10 +101,11 @@ var (
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 type txLoadedMsg struct {
-	txs    []models.Transaction
-	months []string
-	sum    *models.Summary
-	goals  []models.GoalStatus
+	txs      []models.Transaction
+	months   []string
+	accounts []string
+	sum      *models.Summary
+	goals    []models.GoalStatus
 }
 type errMsg struct{ err error }
 type txSavedMsg struct{ err error }
@@ -120,17 +126,19 @@ type Model struct {
 	width  int
 	height int
 
-	txs         []models.Transaction
-	cursor      int
-	months      []string // ["2026-06", "2026-05", ...]
-	activeTab   int      // index into months; -1 = all
-	summary     *models.Summary
-	goals       []models.GoalStatus
-	searchQ     string
-	searching   bool
-	searchInput textinput.Model
-	filterCat   string
-	vp          viewport.Model
+	txs           []models.Transaction
+	cursor        int
+	months        []string // ["2026-06", "2026-05", ...]
+	activeTab     int      // index into months; -1 = all
+	accounts      []string // ["N26", "ING", ...]
+	activeAccount int      // index into accounts; -1 = all
+	summary       *models.Summary
+	goals         []models.GoalStatus
+	searchQ       string
+	searching     bool
+	searchInput   textinput.Model
+	filterCat     string
+	vp            viewport.Model
 
 	// add/edit form
 	form    [fCount]textinput.Model
@@ -148,13 +156,15 @@ type Model struct {
 	helpPopH int
 
 	// CSV import assistant
-	importStep   importStep
-	fp           filepicker.Model
-	importPath   string
-	importParsed []models.Transaction // parsed preview, before any DB write
-	importErr    error
-	importUseAI  bool
-	importResult budget.ImportResult
+	importStep        importStep
+	fp                filepicker.Model
+	importPath        string
+	importParsed      []models.Transaction // parsed preview, before any DB write
+	importErr         error
+	importUseAI       bool
+	importResult      budget.ImportResult
+	importAcctInput   textinput.Model
+	importEditingAcct bool
 
 	status     string
 	statusTime time.Time
@@ -168,7 +178,7 @@ func New() Model {
 	ci := textinput.New()
 	ci.Placeholder = "category…"
 	ci.CharLimit = 60
-	return Model{searchInput: si, catInput: ci, activeTab: 0}
+	return Model{searchInput: si, catInput: ci, activeTab: 0, activeAccount: -1}
 }
 
 func newForm(t *models.Transaction) [fCount]textinput.Model {
@@ -204,7 +214,7 @@ func Run() error {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadCmd("", ""), tea.WindowSize())
+	return tea.Batch(loadCmd("", "", ""), tea.WindowSize())
 }
 
 func (m Model) activeMonth() string {
@@ -212,6 +222,23 @@ func (m Model) activeMonth() string {
 		return ""
 	}
 	return m.months[m.activeTab]
+}
+
+// activeAccountName returns the currently selected account filter, or ""
+// for "all accounts combined" (activeAccount == -1, the default).
+func (m Model) activeAccountName() string {
+	if m.activeAccount < 0 || m.activeAccount >= len(m.accounts) {
+		return ""
+	}
+	return m.accounts[m.activeAccount]
+}
+
+// cycleAccount steps an activeAccount index by dir (+1/-1) across the range
+// [-1, n-1], where -1 means "all accounts combined".
+func cycleAccount(active, n, dir int) int {
+	idx := active + 1 // shift to [0, n]
+	idx = (idx + dir + (n + 1)) % (n + 1)
+	return idx - 1
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -231,6 +258,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.months) > 0 {
 			m.months = msg.months
 		}
+		m.accounts = msg.accounts
+		if m.activeAccount >= len(m.accounts) {
+			m.activeAccount = -1
+		}
 		if m.cursor >= len(m.txs) {
 			m.cursor = max(0, len(m.txs)-1)
 		}
@@ -248,7 +279,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = viewList
 			m.editTx = nil
 			m.setStatus("saved")
-			return m, loadCmd(m.activeMonth(), m.searchQ)
+			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 		}
 
 	case txDeletedMsg:
@@ -256,7 +287,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		} else {
 			m.setStatus("deleted")
-			return m, loadCmd(m.activeMonth(), m.searchQ)
+			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 		}
 
 	case importParsedMsg:
@@ -267,6 +298,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.importErr = nil
 		m.importParsed = msg.txs
 		m.importStep = importPreview
+		detected := ""
+		if len(msg.txs) > 0 {
+			detected = msg.txs[0].Account
+		}
+		m.importAcctInput.SetValue(detected)
 		return m, nil
 
 	case importDoneMsg:
@@ -297,7 +333,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i != m.activeTab {
 					m.activeTab = i
 					m.cursor = 0
-					return m, loadCmd(m.activeMonth(), m.searchQ)
+					return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+				}
+				return m, nil
+			}
+			if i := m.accountTabHitTest(msg.X, msg.Y); i >= -1 {
+				if i != m.activeAccount {
+					m.activeAccount = i
+					m.cursor = 0
+					return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 				}
 				return m, nil
 			}
@@ -367,12 +411,18 @@ func (m Model) openImport() Model {
 	}
 	fp.SetHeight(h)
 
+	ai := textinput.New()
+	ai.Placeholder = "account (e.g. N26)…"
+	ai.CharLimit = 60
+
 	m.fp = fp
 	m.importStep = importPickFile
 	m.importPath = ""
 	m.importParsed = nil
 	m.importErr = nil
 	m.importUseAI = os.Getenv("ANTHROPIC_API_KEY") != ""
+	m.importAcctInput = ai
+	m.importEditingAcct = false
 	m.view = viewImport
 	return m
 }
@@ -402,6 +452,19 @@ func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case importPreview:
+		if m.importEditingAcct {
+			switch msg.String() {
+			case "enter", "esc":
+				m.importEditingAcct = false
+				m.importAcctInput.Blur()
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.importAcctInput, cmd = m.importAcctInput.Update(msg)
+			return m, cmd
+		}
 		switch msg.String() {
 		case "esc":
 			m.importStep = importPickFile
@@ -410,12 +473,16 @@ func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "a":
 			m.importUseAI = !m.importUseAI
 			return m, nil
+		case "t":
+			m.importEditingAcct = true
+			m.importAcctInput.CursorEnd()
+			return m, m.importAcctInput.Focus()
 		case "enter", "y":
 			if len(m.importParsed) == 0 {
 				return m, nil
 			}
 			m.importStep = importRunning
-			return m, runImportCmd(m.importPath, m.importUseAI)
+			return m, runImportCmd(m.importPath, strings.TrimSpace(m.importAcctInput.Value()), m.importUseAI)
 		case "ctrl+c":
 			return m, tea.Quit
 		}
@@ -430,7 +497,7 @@ func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case importDone:
 		m.view = viewList
 		m.importStep = importPickFile
-		return m, loadCmd(m.activeMonth(), m.searchQ)
+		return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 	}
 	return m, nil
 }
@@ -477,7 +544,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchQ = m.searchInput.Value()
 			m.searching = false
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ)
+			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 		case "esc":
 			m.searching = false
 			m.searchInput.SetValue("")
@@ -497,13 +564,25 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ)
+			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 		}
 	case "shift+tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab - 1 + len(m.months)) % len(m.months)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ)
+			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+		}
+	case "]":
+		if len(m.accounts) > 0 {
+			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), 1)
+			m.cursor = 0
+			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+		}
+	case "[":
+		if len(m.accounts) > 0 {
+			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), -1)
+			m.cursor = 0
+			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 		}
 	case "j", "down":
 		if m.cursor < len(m.txs)-1 {
@@ -567,7 +646,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.searchQ != "" {
 			m.searchQ = ""
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), "")
+			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
 		}
 	}
 	return m, nil
@@ -581,12 +660,22 @@ func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
-			return m, loadCmd(m.activeMonth(), "")
+			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
 		}
 	case "shift+tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab - 1 + len(m.months)) % len(m.months)
-			return m, loadCmd(m.activeMonth(), "")
+			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
+		}
+	case "]":
+		if len(m.accounts) > 0 {
+			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), 1)
+			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
+		}
+	case "[":
+		if len(m.accounts) > 0 {
+			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), -1)
+			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
 		}
 	}
 	var cmd tea.Cmd
@@ -812,11 +901,21 @@ func (m Model) renderImportPreview() string {
 		}
 	}
 
+	if m.importEditingAcct {
+		b.WriteString("\n" + styleMuted.Render("Account: ") + m.importAcctInput.View() + "\n")
+	} else {
+		acct := m.importAcctInput.Value()
+		if acct == "" {
+			acct = "(none — generic import)"
+		}
+		b.WriteString("\n" + styleMuted.Render(fmt.Sprintf("Account: %s  (t to edit)", acct)) + "\n")
+	}
+
 	aiLabel := "off"
 	if m.importUseAI {
 		aiLabel = "on"
 	}
-	b.WriteString("\n" + styleMuted.Render(fmt.Sprintf("AI-categorize uncategorized entries: %s  (a to toggle)", aiLabel)) + "\n")
+	b.WriteString(styleMuted.Render(fmt.Sprintf("AI-categorize uncategorized entries: %s  (a to toggle)", aiLabel)) + "\n")
 	b.WriteString(styleMuted.Render("enter: import  ·  esc: back  ·  ctrl+c: quit"))
 	return b.String()
 }
@@ -851,11 +950,15 @@ func (m Model) renderHeader(section string) string {
 
 // listStartRow returns the row (0-indexed within the rendered View()) the
 // first transaction row appears on: header title(1) + rule(1) + tabs(1) +
-// divider(1), plus any active search/categorize prompt. Shared by
-// renderList (to size the visible window) and the mouse hit-test helpers
-// below, so a click always lands on the row it visually appears to.
+// divider(1), plus an account-tab row when more than one account exists,
+// plus any active search/categorize prompt. Shared by renderList (to size
+// the visible window) and the mouse hit-test helpers below, so a click
+// always lands on the row it visually appears to.
 func (m Model) listStartRow() int {
 	row := 4
+	if len(m.accounts) > 1 {
+		row++
+	}
 	if m.searching {
 		row += 2
 	}
@@ -887,6 +990,32 @@ func (m Model) tabHitTest(x, y int) int {
 		col += w
 	}
 	return -1
+}
+
+// accountTabHitTest returns the account index at column x on the account tab
+// row (only rendered when there's more than one account), or -1 if the click
+// didn't land on a tab. -1 also stands for "the click missed", so callers
+// checking "which account was selected" must first confirm the row matched;
+// activeAccountName/m.accounts[-1] is never dereferenced here directly —
+// the returned index is offset by one internally so -1 ("All") is a valid hit.
+func (m Model) accountTabHitTest(x, y int) int {
+	const acctTabRow = 3 // header title(0) + rule(1) + month tabs(2) + account tabs(3)
+	if y != acctTabRow || len(m.accounts) <= 1 {
+		return -2
+	}
+	col := 0
+	labels := append([]string{"All"}, m.accounts...)
+	for i, label := range labels {
+		w := lipgloss.Width(styleAcctTabInact.Render(label))
+		if i-1 == m.activeAccount {
+			w = lipgloss.Width(styleAcctTabActive.Render(label))
+		}
+		if x >= col && x < col+w {
+			return i - 1
+		}
+		col += w
+	}
+	return -2
 }
 
 // rowHitTest returns the transaction index at row y, or -1 if the click
@@ -934,6 +1063,21 @@ func (m Model) renderList() string {
 	} else {
 		b.WriteString("\n")
 	}
+
+	// ── account tab bar (only worth showing once there's more than one) ──
+	if len(m.accounts) > 1 {
+		var aparts []string
+		labels := append([]string{"All"}, m.accounts...)
+		for i, label := range labels {
+			if i-1 == m.activeAccount {
+				aparts = append(aparts, styleAcctTabActive.Render(label))
+			} else {
+				aparts = append(aparts, styleAcctTabInact.Render(label))
+			}
+		}
+		b.WriteString(strings.Join(aparts, "") + "\n")
+	}
+
 	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
 
 	if m.searching {
@@ -993,7 +1137,7 @@ func (m Model) renderList() string {
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ?:help  q:quit")
+		bar = styleHelp.Render("n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  [/]:account  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -1042,9 +1186,10 @@ func (m Model) helpContent() string {
 	b.WriteString(row("pgdn/pgup", "page down / up"))
 	b.WriteString(row("tab", "next month"))
 	b.WriteString(row("shift+tab", "previous month"))
+	b.WriteString(row("[ / ]", "previous / next account (when 2+ accounts exist)"))
 	b.WriteString(section("Entries"))
 	b.WriteString(row("n", "new entry (manual income/expense)"))
-	b.WriteString(row("i", "import CSV (N26, ING, DKB, generic)"))
+	b.WriteString(row("i", "import CSV (N26, ING, DKB, generic) — t at preview: tag account"))
 	b.WriteString(row("e", "edit selected entry"))
 	b.WriteString(row("d", "delete entry (asks to confirm)"))
 	b.WriteString(row("c", "set category for selected entry"))
@@ -1115,16 +1260,34 @@ func (m Model) renderSummaryView() string {
 	if len(parts) > 0 {
 		b.WriteString(strings.Join(parts, "") + "\n")
 	}
+
+	if len(m.accounts) > 1 {
+		var aparts []string
+		labels := append([]string{"All"}, m.accounts...)
+		for i, label := range labels {
+			if i-1 == m.activeAccount {
+				aparts = append(aparts, styleAcctTabActive.Render(label))
+			} else {
+				aparts = append(aparts, styleAcctTabInact.Render(label))
+			}
+		}
+		b.WriteString(strings.Join(aparts, "") + "\n")
+	}
+
 	b.WriteString(styleDivider.Render(strings.Repeat("─", m.width)) + "\n")
 
-	m.vp.Height = m.height - 7
+	vpH := m.height - 7
+	if len(m.accounts) > 1 {
+		vpH--
+	}
+	m.vp.Height = vpH
 	b.WriteString(m.vp.View())
 
 	pct := ""
 	if m.vp.TotalLineCount() > m.vp.Height {
 		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
 	}
-	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
+	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  [/]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
 	return b.String()
 }
 
@@ -1242,20 +1405,23 @@ func parseImportCmd(path string) tea.Cmd {
 }
 
 // runImportCmd performs the actual import (upsert + optional AI
-// categorization) after the user confirms the preview.
-func runImportCmd(path string, useAI bool) tea.Cmd {
+// categorization) after the user confirms the preview. account overrides
+// every parsed transaction's account field when non-empty (see the "t"
+// binding in the preview step); an empty account leaves each row's
+// bank-detected account (or "" for generic CSVs) untouched.
+func runImportCmd(path, account string, useAI bool) tea.Cmd {
 	return func() tea.Msg {
 		s, err := store.New(config.DBPath())
 		if err != nil {
 			return importDoneMsg{err: err}
 		}
 		defer s.Close()
-		res, err := budget.ImportFile(context.Background(), s, path, "", useAI)
+		res, err := budget.ImportFile(context.Background(), s, path, account, useAI)
 		return importDoneMsg{res: res, err: err}
 	}
 }
 
-func loadCmd(month, query string) tea.Cmd {
+func loadCmd(month, query, account string) tea.Cmd {
 	return func() tea.Msg {
 		s, err := store.New(config.DBPath())
 		if err != nil {
@@ -1264,19 +1430,21 @@ func loadCmd(month, query string) tea.Cmd {
 		defer s.Close()
 		ctx := context.Background()
 
-		txs, err := s.List(ctx, store.Filter{Month: month, Query: query, Limit: 500})
+		txs, err := s.List(ctx, store.Filter{Month: month, Query: query, Account: account, Limit: 500})
 		if err != nil {
 			return errMsg{err}
 		}
 		months, _ := s.ListMonths(ctx)
+		accounts, _ := s.ListAccounts(ctx)
 
-		// summary for active month
-		sum, _ := s.Summary(ctx, month)
+		// summary for active month (and account, if one is selected)
+		sum, _ := s.Summary(ctx, month, account)
 
-		// goals with current-month spend
+		// goals with current-month spend (always across all accounts — a
+		// budget goal like "dining < 200€" isn't naturally per-account)
 		goals, _ := s.GoalStatuses(ctx, month)
 
-		return txLoadedMsg{txs: txs, months: months, sum: sum, goals: goals}
+		return txLoadedMsg{txs: txs, months: months, accounts: accounts, sum: sum, goals: goals}
 	}
 }
 

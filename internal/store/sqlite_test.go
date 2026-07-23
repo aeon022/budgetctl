@@ -113,7 +113,7 @@ func TestSetCategoryAndSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sum, err := s.Summary(ctx, "2026-07")
+	sum, err := s.Summary(ctx, "2026-07", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,5 +122,68 @@ func TestSetCategoryAndSummary(t *testing.T) {
 	}
 	if sum.ByCategory["rent"] != -100 {
 		t.Errorf("category totals wrong: %+v", sum.ByCategory)
+	}
+}
+
+func TestSummaryFiltersByAccount(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	a := tx("a1", -50)
+	a.Account = "N26"
+	if err := s.Upsert(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := tx("b1", -30)
+	b.Account = "ING"
+	if err := s.Upsert(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.Summary(ctx, "2026-07", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.Expenses != -80 {
+		t.Errorf("expected combined expenses -80 across both accounts, got %v", all.Expenses)
+	}
+
+	n26, err := s.Summary(ctx, "2026-07", "N26")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n26.Expenses != -50 {
+		t.Errorf("expected N26-only expenses -50, got %v", n26.Expenses)
+	}
+}
+
+func TestListAccounts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	a := tx("a1", -1)
+	a.Account = "N26"
+	b := tx("b1", -1)
+	b.Account = "ING"
+	c := tx("c1", -1)
+	c.Account = "" // generic import with no detected account — must not show up as a phantom "" entry
+	for _, t2 := range []*models.Transaction{a, b, c} {
+		if err := s.Upsert(ctx, t2); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	accts, err := s.ListAccounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"N26": true, "ING": true}
+	if len(accts) != 2 {
+		t.Fatalf("expected 2 distinct accounts (empty excluded), got %+v", accts)
+	}
+	for _, a := range accts {
+		if !want[a] {
+			t.Errorf("unexpected account %q in list", a)
+		}
 	}
 }

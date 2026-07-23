@@ -19,6 +19,7 @@ var summaryCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		month, _ := cmd.Flags().GetString("month")
 		asJSON, _ := cmd.Flags().GetBool("json")
+		account, _ := cmd.Flags().GetString("account")
 
 		if month == "" {
 			month = time.Now().Format("2006-01")
@@ -30,7 +31,7 @@ var summaryCmd = &cobra.Command{
 		}
 		defer s.Close()
 
-		sum, err := s.Summary(context.Background(), month)
+		sum, err := s.Summary(context.Background(), month, account)
 		if err != nil {
 			return err
 		}
@@ -39,7 +40,11 @@ var summaryCmd = &cobra.Command{
 			return json.NewEncoder(os.Stdout).Encode(sum)
 		}
 
-		fmt.Printf("── %s ──────────────────────────────\n", month)
+		label := month
+		if account != "" {
+			label = month + " · " + account
+		}
+		fmt.Printf("── %s ──────────────────────────────\n", label)
 		fmt.Printf("  Income:   %+10.2f €\n", sum.Income)
 		fmt.Printf("  Expenses: %+10.2f €\n", sum.Expenses)
 		fmt.Printf("  Net:      %+10.2f €\n", sum.Net)
@@ -70,4 +75,5 @@ func init() {
 	rootCmd.AddCommand(summaryCmd)
 	summaryCmd.Flags().StringP("month", "m", "", "Month (YYYY-MM, default: current)")
 	summaryCmd.Flags().Bool("json", false, "Output as JSON")
+	summaryCmd.Flags().StringP("account", "a", "", "Filter to one account (default: all accounts combined)")
 }
