@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ── Views ─────────────────────────────────────────────────────────────────────
@@ -405,7 +406,13 @@ func (m Model) openImport() Model {
 			fp.CurrentDirectory = downloads
 		}
 	}
-	h := m.height - 10
+	// Budget: 2(title+blank) + 2(desc, wraps to 2 lines at the popup's max
+	// width) + 1(blank after desc) + 1(blank after the file list) +
+	// 1(footer) + 2(border) + 2(padding) = 11 lines of "chrome" around the
+	// file list, plus bubbles/filepicker's own View() always emits
+	// Height+1 lines (it pads through i<=Height inclusive) — so the file
+	// list's budget needs to be one shorter again.
+	h := m.height - 12
 	if h < 5 {
 		h = 5
 	}
@@ -818,6 +825,18 @@ func (m Model) View() string {
 	}
 }
 
+// importPopupWidth is the fixed outer width of the import assistant's
+// bordered popup. Shared by renderImportPopup (which applies it) and
+// renderImportPickFile (which must truncate the file list to the matching
+// CONTENT width — see the comment there for why).
+func (m Model) importPopupWidth() int {
+	w := min(76, m.width-4)
+	if w < 50 {
+		w = 50
+	}
+	return w
+}
+
 func (m Model) renderImportPopup() string {
 	var body string
 	switch m.importStep {
@@ -830,15 +849,11 @@ func (m Model) renderImportPopup() string {
 	case importDone:
 		body = m.renderImportDone()
 	}
-	w := min(76, m.width-4)
-	if w < 50 {
-		w = 50
-	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorBlue).
 		Padding(1, 2).
-		Width(w).
+		Width(m.importPopupWidth()).
 		Render(body)
 }
 
@@ -849,8 +864,21 @@ func (m Model) renderImportPickFile() string {
 		b.WriteString(styleErr.Render("✗ "+m.importErr.Error()) + "\n\n")
 	}
 	b.WriteString(styleMuted.Render("Pick a bank CSV export (N26, ING, DKB, or a generic CSV with date/description/amount columns).") + "\n\n")
-	b.WriteString(m.fp.View() + "\n")
-	b.WriteString(styleMuted.Render("esc: cancel"))
+
+	// bubbles/filepicker never truncates long file names itself — it emits
+	// them at full length. The bordered popup below applies lipgloss
+	// Width(), which WORD-WRAPS anything too long instead of truncating,
+	// silently turning one file-list row into two physical lines. That
+	// desynced the file list's actual height from fp.SetHeight()'s budget,
+	// pushing the footer (and the bottom of the list itself) off the
+	// bottom of the popup. Truncate each row ourselves first so 1 file =
+	// always exactly 1 physical line.
+	contentW := m.importPopupWidth() - 6 // border(2) + padding(4)
+	for _, line := range strings.Split(m.fp.View(), "\n") {
+		b.WriteString(ansi.Truncate(line, contentW, "…") + "\n")
+	}
+
+	b.WriteString(styleMuted.Render("↑/↓ or j/k: navigate  ·  enter: open dir / select file  ·  esc: cancel"))
 	return b.String()
 }
 
@@ -1027,7 +1055,7 @@ func (m Model) rowHitTest(y int) int {
 	if idx < 0 || len(m.txs) == 0 {
 		return -1
 	}
-	listH := m.height - m.listStartRow() - 1
+	listH := m.height - m.listStartRow() - 2 // divider + footer bar
 	if listH < 1 {
 		listH = 1
 	}
@@ -1090,7 +1118,7 @@ func (m Model) renderList() string {
 		b.WriteString("  " + styleCategory.Render("category: ") + m.catInput.View() + "\n")
 	}
 
-	listH := m.height - m.listStartRow() - 1 // -1 for the trailing status bar
+	listH := m.height - m.listStartRow() - 2 // divider + trailing status bar
 	if listH < 1 {
 		listH = 1
 	}

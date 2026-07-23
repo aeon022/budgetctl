@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aeon022/budgetctl/internal/budget"
@@ -299,7 +300,7 @@ func TestRowHitTest_RespectsScrollWindow(t *testing.T) {
 	}
 	m := Model{width: 100, height: 15, txs: txs, cursor: 20}
 
-	listH := m.height - m.listStartRow() - 1
+	listH := m.height - m.listStartRow() - 2
 	winStart := m.cursor - listH + 1
 	got := m.rowHitTest(m.listStartRow()) // click on the first visible row
 	if got != winStart {
@@ -552,5 +553,61 @@ func TestImportAssistant_AccountTagAppliedOnImport(t *testing.T) {
 	}
 	if txs[0].Account != "myaccount" {
 		t.Errorf("expected imported transaction tagged with account 'myaccount', got %q", txs[0].Account)
+	}
+}
+
+func TestRenderList_LineCountMatchesHeightExactly(t *testing.T) {
+	// Regression test: renderList used to emit m.height+1 lines (listH's
+	// budget only reserved 1 row for the trailing status bar, missing the
+	// divider line printed just above it), which pushed the top of the
+	// view — the header — off screen in terminals that don't reflow a
+	// too-tall alt-screen frame.
+	var txs []models.Transaction
+	for i := 0; i < 84; i++ {
+		txs = append(txs, models.Transaction{Description: fmt.Sprintf("tx%d", i)})
+	}
+	for _, h := range []int{8, 15, 20, 30, 43} {
+		m := Model{width: 100, height: h, months: []string{"2026-07", "2026-06"}, txs: txs}
+		lines := strings.Split(m.renderList(), "\n")
+		if len(lines) != h {
+			t.Errorf("height=%d: renderList produced %d lines, want exactly %d", h, len(lines), h)
+		}
+	}
+}
+
+func TestImportPickFile_LongFileNamesDoNotOverflowPopup(t *testing.T) {
+	// Regression test: bubbles/filepicker never truncates long file names,
+	// so the popup's lipgloss Width() word-wrapped them into extra
+	// physical lines the height budget never accounted for — pushing the
+	// footer (and the file-list navigation hints) off the bottom of the
+	// popup. Reproduced with a real long filename, not a synthetic one,
+	// since the bug only shows once fp.Init() actually lists real files.
+	dir := t.TempDir()
+	longName := strings.Repeat("a-very-long-descriptive-bank-export-filename-", 3) + ".csv"
+	if err := os.WriteFile(dir+"/"+longName, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+	m.fp.CurrentDirectory = dir
+
+	if cmd := m.fp.Init(); cmd != nil {
+		if msg := cmd(); msg != nil {
+			var fpCmd tea.Cmd
+			m.fp, fpCmd = m.fp.Update(msg)
+			for fpCmd != nil {
+				msg2 := fpCmd()
+				if msg2 == nil {
+					break
+				}
+				m.fp, fpCmd = m.fp.Update(msg2)
+			}
+		}
+	}
+
+	lines := strings.Split(m.renderImportPopup(), "\n")
+	if len(lines) > m.height {
+		t.Errorf("import popup is %d lines tall, exceeds terminal height %d — footer/nav keys would be clipped", len(lines), m.height)
 	}
 }
