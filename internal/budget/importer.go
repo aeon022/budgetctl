@@ -220,17 +220,23 @@ func parseGeneric(r io.Reader, source string) ([]models.Transaction, error) {
 		return nil, fmt.Errorf("no data rows in CSV")
 	}
 
-	// find column indices from header
+	// find column indices from header. First match wins for each field —
+	// several real bank exports (e.g. N26) have more than one column whose
+	// name contains "amount" ("Amount (EUR)" AND "Amount (Foreign
+	// Currency)"); always taking the LAST match here used to silently pick
+	// the near-always-empty foreign-currency column instead, making every
+	// row's amount unparseable and dropping the entire import with no
+	// error at all.
 	header := rows[0]
 	dateCol, descCol, amtCol := -1, -1, -1
 	for i, h := range header {
 		h = strings.ToLower(strings.TrimSpace(h))
 		switch {
-		case strings.Contains(h, "date") || strings.Contains(h, "datum"):
+		case dateCol < 0 && (strings.Contains(h, "date") || strings.Contains(h, "datum")):
 			dateCol = i
-		case strings.Contains(h, "description") || strings.Contains(h, "verwendung") || strings.Contains(h, "payee") || strings.Contains(h, "empfänger"):
+		case descCol < 0 && (strings.Contains(h, "description") || strings.Contains(h, "verwendung") || strings.Contains(h, "payee") || strings.Contains(h, "empfänger")):
 			descCol = i
-		case strings.Contains(h, "amount") || strings.Contains(h, "betrag"):
+		case amtCol < 0 && (strings.Contains(h, "amount") || strings.Contains(h, "betrag")):
 			amtCol = i
 		}
 	}

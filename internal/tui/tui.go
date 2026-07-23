@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/aeon022/budgetctl/internal/store"
 	"github.com/aeon022/missionctl-core/overlay"
 	"github.com/aeon022/missionctl-core/theme"
+	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +31,18 @@ const (
 	viewSummary view = iota
 	viewHelp    view = iota
 	viewForm    view = iota
+	viewImport  view = iota
+)
+
+// ── Import assistant steps ──────────────────────────────────────────────────
+
+type importStep int
+
+const (
+	importPickFile importStep = iota
+	importPreview
+	importRunning
+	importDone
 )
 
 // form field indices
@@ -89,6 +104,14 @@ type txLoadedMsg struct {
 type errMsg struct{ err error }
 type txSavedMsg struct{ err error }
 type txDeletedMsg struct{ err error }
+type importParsedMsg struct {
+	txs []models.Transaction
+	err error
+}
+type importDoneMsg struct {
+	res budget.ImportResult
+	err error
+}
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -123,6 +146,15 @@ type Model struct {
 	helpVP   viewport.Model
 	helpPopW int
 	helpPopH int
+
+	// CSV import assistant
+	importStep   importStep
+	fp           filepicker.Model
+	importPath   string
+	importParsed []models.Transaction // parsed preview, before any DB write
+	importErr    error
+	importUseAI  bool
+	importResult budget.ImportResult
 
 	status     string
 	statusTime time.Time
@@ -227,6 +259,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, loadCmd(m.activeMonth(), m.searchQ)
 		}
 
+	case importParsedMsg:
+		if msg.err != nil {
+			m.importErr = msg.err
+			return m, nil
+		}
+		m.importErr = nil
+		m.importParsed = msg.txs
+		m.importStep = importPreview
+		return m, nil
+
+	case importDoneMsg:
+		m.importResult = msg.res
+		m.importErr = msg.err
+		m.importStep = importDone
+		return m, nil
+
 	case tea.MouseMsg:
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
@@ -271,6 +319,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSummary(msg)
 		case viewForm:
 			return m.updateForm(msg)
+		case viewImport:
+			return m.updateImport(msg)
 		case viewHelp:
 			switch msg.String() {
 			case "ctrl+c":
@@ -289,6 +339,98 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
+	}
+	if m.view == viewImport && m.importStep == importPickFile {
+		// Non-key messages (directory-read results, etc.) the filepicker
+		// needs to function — key messages are handled in updateImport.
+		var cmd tea.Cmd
+		m.fp, cmd = m.fp.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+// openImport opens the CSV import assistant, rooted at ~/Downloads (falling
+// back to the home directory) since that's where bank exports usually land.
+func (m Model) openImport() Model {
+	fp := filepicker.New()
+	fp.AllowedTypes = []string{".csv"}
+	if home, err := os.UserHomeDir(); err == nil {
+		fp.CurrentDirectory = home
+		if downloads := filepath.Join(home, "Downloads"); isDir(downloads) {
+			fp.CurrentDirectory = downloads
+		}
+	}
+	h := m.height - 10
+	if h < 5 {
+		h = 5
+	}
+	fp.SetHeight(h)
+
+	m.fp = fp
+	m.importStep = importPickFile
+	m.importPath = ""
+	m.importParsed = nil
+	m.importErr = nil
+	m.importUseAI = os.Getenv("ANTHROPIC_API_KEY") != ""
+	m.view = viewImport
+	return m
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.importStep {
+	case importPickFile:
+		if msg.String() == "esc" {
+			m.view = viewList
+			return m, nil
+		}
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		var cmd tea.Cmd
+		m.fp, cmd = m.fp.Update(msg)
+		if didSelect, path := m.fp.DidSelectFile(msg); didSelect {
+			m.importPath = path
+			m.importErr = nil
+			return m, tea.Batch(cmd, parseImportCmd(path))
+		}
+		return m, cmd
+
+	case importPreview:
+		switch msg.String() {
+		case "esc":
+			m.importStep = importPickFile
+			m.importErr = nil
+			return m, nil
+		case "a":
+			m.importUseAI = !m.importUseAI
+			return m, nil
+		case "enter", "y":
+			if len(m.importParsed) == 0 {
+				return m, nil
+			}
+			m.importStep = importRunning
+			return m, runImportCmd(m.importPath, m.importUseAI)
+		case "ctrl+c":
+			return m, tea.Quit
+		}
+		return m, nil
+
+	case importRunning:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		return m, nil
+
+	case importDone:
+		m.view = viewList
+		m.importStep = importPickFile
+		return m, loadCmd(m.activeMonth(), m.searchQ)
 	}
 	return m, nil
 }
@@ -397,6 +539,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.form = newForm(nil)
 		m.formIdx = 0
 		return m, m.form[fDate].Focus()
+	case "i":
+		m = m.openImport()
+		return m, m.fp.Init()
 	case "e":
 		if len(m.txs) > 0 {
 			t := m.txs[m.cursor]
@@ -577,9 +722,117 @@ func (m Model) View() string {
 		return overlay.Center(m.renderList(), m.renderHelpPopup(), m.width, m.height, 0)
 	case viewForm:
 		return m.renderForm()
+	case viewImport:
+		return overlay.Center(m.renderList(), m.renderImportPopup(), m.width, m.height, 0)
 	default:
 		return m.renderList()
 	}
+}
+
+func (m Model) renderImportPopup() string {
+	var body string
+	switch m.importStep {
+	case importPickFile:
+		body = m.renderImportPickFile()
+	case importPreview:
+		body = m.renderImportPreview()
+	case importRunning:
+		body = styleHeader.Render("Importing…") + "\n\n" + styleMuted.Render("please wait")
+	case importDone:
+		body = m.renderImportDone()
+	}
+	w := min(76, m.width-4)
+	if w < 50 {
+		w = 50
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Width(w).
+		Render(body)
+}
+
+func (m Model) renderImportPickFile() string {
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Import CSV") + "\n\n")
+	if m.importErr != nil {
+		b.WriteString(styleErr.Render("✗ "+m.importErr.Error()) + "\n\n")
+	}
+	b.WriteString(styleMuted.Render("Pick a bank CSV export (N26, ING, DKB, or a generic CSV with date/description/amount columns).") + "\n\n")
+	b.WriteString(m.fp.View() + "\n")
+	b.WriteString(styleMuted.Render("esc: cancel"))
+	return b.String()
+}
+
+func (m Model) renderImportPreview() string {
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Import Preview") + "\n\n")
+	b.WriteString(fmt.Sprintf("File: %s\n", filepath.Base(m.importPath)))
+	b.WriteString(fmt.Sprintf("Transactions found: %d\n\n", len(m.importParsed)))
+
+	if len(m.importParsed) == 0 {
+		b.WriteString(styleErr.Render("No transactions detected in this file — check it's a supported format.") + "\n\n")
+	} else {
+		minD, maxD := m.importParsed[0].Date, m.importParsed[0].Date
+		var income, expense float64
+		for _, t := range m.importParsed {
+			if t.Date.Before(minD) {
+				minD = t.Date
+			}
+			if t.Date.After(maxD) {
+				maxD = t.Date
+			}
+			if t.Amount >= 0 {
+				income += t.Amount
+			} else {
+				expense += t.Amount
+			}
+		}
+		b.WriteString(fmt.Sprintf("Date range: %s – %s\n", minD.Format("2006-01-02"), maxD.Format("2006-01-02")))
+		b.WriteString(styleIncome.Render(fmt.Sprintf("Income:   %+.2f€", income)) + "\n")
+		b.WriteString(styleExpense.Render(fmt.Sprintf("Expenses: %+.2f€", expense)) + "\n\n")
+
+		b.WriteString(styleMuted.Render("Sample:") + "\n")
+		n := min(5, len(m.importParsed))
+		for i := 0; i < n; i++ {
+			t := m.importParsed[i]
+			amtStyle := styleIncome
+			if t.Amount < 0 {
+				amtStyle = styleExpense
+			}
+			desc := t.Description
+			if r := []rune(desc); len(r) > 40 {
+				desc = string(r[:39]) + "…"
+			}
+			b.WriteString(fmt.Sprintf("  %s  %s  %s\n", t.Date.Format("2006-01-02"), amtStyle.Render(fmt.Sprintf("%9.2f€", t.Amount)), desc))
+		}
+		if len(m.importParsed) > n {
+			b.WriteString(styleMuted.Render(fmt.Sprintf("  … and %d more\n", len(m.importParsed)-n)))
+		}
+	}
+
+	aiLabel := "off"
+	if m.importUseAI {
+		aiLabel = "on"
+	}
+	b.WriteString("\n" + styleMuted.Render(fmt.Sprintf("AI-categorize uncategorized entries: %s  (a to toggle)", aiLabel)) + "\n")
+	b.WriteString(styleMuted.Render("enter: import  ·  esc: back  ·  ctrl+c: quit"))
+	return b.String()
+}
+
+func (m Model) renderImportDone() string {
+	var b strings.Builder
+	if m.importErr != nil {
+		b.WriteString(styleErr.Render("✗ Import failed: "+m.importErr.Error()) + "\n\n")
+	} else {
+		b.WriteString(styleOK.Render(fmt.Sprintf("✓ Imported %d transaction(s)", m.importResult.Imported)) + "\n")
+		if m.importUseAI && m.importResult.AICategorized > 0 {
+			b.WriteString(styleMuted.Render(fmt.Sprintf("AI-categorized: %d", m.importResult.AICategorized)) + "\n")
+		}
+	}
+	b.WriteString("\n" + styleMuted.Render("press any key to continue"))
+	return b.String()
 }
 
 // renderHeader draws the one header shared by every view: app name +
@@ -740,7 +993,7 @@ func (m Model) renderList() string {
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("n:new  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ?:help  q:quit")
+		bar = styleHelp.Render("n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -791,6 +1044,7 @@ func (m Model) helpContent() string {
 	b.WriteString(row("shift+tab", "previous month"))
 	b.WriteString(section("Entries"))
 	b.WriteString(row("n", "new entry (manual income/expense)"))
+	b.WriteString(row("i", "import CSV (N26, ING, DKB, generic)"))
 	b.WriteString(row("e", "edit selected entry"))
 	b.WriteString(row("d", "delete entry (asks to confirm)"))
 	b.WriteString(row("c", "set category for selected entry"))
@@ -978,6 +1232,28 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, width int) st
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
+
+// parseImportCmd parses path for the preview step — no DB write yet.
+func parseImportCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		txs, err := budget.Import(path)
+		return importParsedMsg{txs: txs, err: err}
+	}
+}
+
+// runImportCmd performs the actual import (upsert + optional AI
+// categorization) after the user confirms the preview.
+func runImportCmd(path string, useAI bool) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath())
+		if err != nil {
+			return importDoneMsg{err: err}
+		}
+		defer s.Close()
+		res, err := budget.ImportFile(context.Background(), s, path, "", useAI)
+		return importDoneMsg{res: res, err: err}
+	}
+}
 
 func loadCmd(month, query string) tea.Cmd {
 	return func() tea.Msg {

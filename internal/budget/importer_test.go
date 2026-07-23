@@ -194,6 +194,36 @@ func TestTxIDStable(t *testing.T) {
 	}
 }
 
+func TestParseGeneric_PicksFirstMatchingAmountColumn(t *testing.T) {
+	// Regression test: found by actually running a real import end-to-end
+	// rather than just the existing filename-triggered N26-parser tests.
+	// This is the exact N26 header shape, but a filename WITHOUT "n26" in
+	// it, so it goes through parseGeneric instead of the dedicated N26
+	// parser. The header has TWO columns containing "amount" — "Amount
+	// (EUR)" and the near-always-empty "Amount (Foreign Currency)". Taking
+	// the LAST match (the old behavior) picked the foreign-currency
+	// column, which is empty for domestic transactions, made every row's
+	// amount unparseable, and silently dropped the entire import with no
+	// error at all — "Imported 0 transactions" and no indication why.
+	csv := `Date,Payee,Account number,Transaction type,Payment reference,Amount (EUR),Amount (Foreign Currency),Type Foreign Currency,Exchange Rate
+2026-07-20,Rewe Supermarkt,DE123,MasterCard Payment,Groceries,-42.30,,,
+2026-07-18,Employer GmbH,DE456,Income,Salary,2800.00,,,
+`
+	txs, err := Import(writeTemp(t, "bank-export.csv", csv)) // no "n26" in the filename
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txs) != 2 {
+		t.Fatalf("want 2 transactions, got %d (amount column was likely mis-detected)", len(txs))
+	}
+	if txs[0].Amount != -42.30 {
+		t.Errorf("want amount -42.30, got %v", txs[0].Amount)
+	}
+	if txs[1].Amount != 2800.00 {
+		t.Errorf("want amount 2800.00, got %v", txs[1].Amount)
+	}
+}
+
 func TestCategorize(t *testing.T) {
 	rules := []models.CategoryRule{
 		{Pattern: "netflix", Category: "streaming"},

@@ -1,5 +1,3 @@
-github.com/aeon022/missionctl-core v0.0.0-20260723142303-c6bca2080f33 h1:iH0hwRwbrhfMHWrl14skfms73zTzbWAp1bbMgdrxbOs=
-github.com/aeon022/missionctl-core v0.0.0-20260723142303-c6bca2080f33/go.mod h1:Pz2jt23g0MLyQ1TXZxyXdRYWrQFC43dMAwOhQk/e9oo=
 github.com/aeon022/missionctl-core v0.0.0-20260723143759-802e78b02d43 h1:Hyw6NGLd8CNvsIYqHraAKYqXw9J2bmz5C+Fecs2ioNo=
 github.com/aeon022/missionctl-core v0.0.0-20260723143759-802e78b02d43/go.mod h1:Pz2jt23g0MLyQ1TXZxyXdRYWrQFC43dMAwOhQk/e9oo=
 github.com/anthropics/anthropic-sdk-go v1.57.0 h1:iEAcPbUKfJ2Iqz9uN/jEndCNW2+x7OYLHDidXDhPjI0=

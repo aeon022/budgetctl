@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/aeon022/budgetctl/internal/budget"
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
@@ -302,5 +303,123 @@ func TestRowHitTest_RespectsScrollWindow(t *testing.T) {
 	got := m.rowHitTest(m.listStartRow()) // click on the first visible row
 	if got != winStart {
 		t.Errorf("expected click on first visible row to hit tx index %d (scroll window start), got %d", winStart, got)
+	}
+}
+
+func TestImportAssistant_OpensToFilePicker(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	m = mi.(Model)
+	if m.view != viewImport || m.importStep != importPickFile {
+		t.Fatalf("expected viewImport/importPickFile after 'i', got view=%v step=%v", m.view, m.importStep)
+	}
+	if cmd == nil {
+		t.Error("expected a command to init the file picker (directory read)")
+	}
+}
+
+func TestImportAssistant_ParseErrorStaysOnPickerWithMessage(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+
+	mi, _ := m.Update(importParsedMsg{err: fmt.Errorf("boom")})
+	m = mi.(Model)
+	if m.view != viewImport || m.importStep != importPickFile {
+		t.Errorf("expected to stay on the file picker after a parse error, got view=%v step=%v", m.view, m.importStep)
+	}
+	if m.importErr == nil {
+		t.Error("expected importErr to be set so the picker can show it")
+	}
+}
+
+func TestImportAssistant_SuccessfulParseMovesToPreview(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+
+	parsed := []models.Transaction{{Description: "Rewe", Amount: -42.30}, {Description: "Gehalt", Amount: 2800}}
+	mi, _ := m.Update(importParsedMsg{txs: parsed})
+	m = mi.(Model)
+	if m.importStep != importPreview {
+		t.Fatalf("expected importPreview after a successful parse, got %v", m.importStep)
+	}
+	if len(m.importParsed) != 2 {
+		t.Errorf("expected 2 parsed transactions carried into the preview, got %d", len(m.importParsed))
+	}
+}
+
+func TestImportAssistant_PreviewEscGoesBackToPicker(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+	m.importStep = importPreview
+	m.importParsed = []models.Transaction{{Description: "Rewe", Amount: -1}}
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(Model)
+	if m.importStep != importPickFile {
+		t.Errorf("expected esc at the preview step to return to the file picker, got %v", m.importStep)
+	}
+}
+
+func TestImportAssistant_PreviewAIToggle(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+	m.importStep = importPreview
+	before := m.importUseAI
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = mi.(Model)
+	if m.importUseAI == before {
+		t.Error("expected 'a' to toggle importUseAI")
+	}
+}
+
+func TestImportAssistant_EnterAtPreviewStartsImport(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+	m.importStep = importPreview
+	m.importParsed = []models.Transaction{{Description: "Rewe", Amount: -1}}
+	m.importPath = "/tmp/does-not-matter-for-this-test.csv"
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+	if m.importStep != importRunning {
+		t.Fatalf("expected importRunning after enter, got %v", m.importStep)
+	}
+	if cmd == nil {
+		t.Error("expected a command to actually run the import")
+	}
+}
+
+func TestImportAssistant_EnterAtPreviewWithNoRowsDoesNothing(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+	m.importStep = importPreview
+	m.importParsed = nil // e.g. a file that parsed to zero transactions
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+	if m.importStep != importPreview {
+		t.Errorf("expected enter with no parsed rows to stay on the preview, got %v", m.importStep)
+	}
+}
+
+func TestImportAssistant_DoneStepAnyKeyClosesAndRefreshesList(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	m = m.openImport()
+	m.importStep = importRunning
+
+	mi, _ := m.Update(importDoneMsg{res: budget.ImportResult{Imported: 3}})
+	m = mi.(Model)
+	if m.importStep != importDone {
+		t.Fatalf("expected importDone after the import command resolves, got %v", m.importStep)
+	}
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+	if m.view != viewList {
+		t.Errorf("expected any key at the done step to close back to viewList, got %v", m.view)
+	}
+	if cmd == nil {
+		t.Error("expected closing to trigger a list reload")
 	}
 }
