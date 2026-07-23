@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/aeon022/budgetctl/internal/config"
+	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/viper"
@@ -235,4 +237,70 @@ func splitLinesForTest(s string) []string {
 		cur += string(r)
 	}
 	return append(lines, cur)
+}
+
+func TestTabHitTest_ClickSwitchesActiveMonth(t *testing.T) {
+	m := Model{width: 100, height: 20, months: []string{"2026-07", "2026-06", "2026-05"}, activeTab: 0}
+
+	mi, cmd := m.Update(tea.MouseMsg{X: 12, Y: 2, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = mi.(Model)
+	if m.activeTab != 1 {
+		t.Errorf("expected click on second tab to switch activeTab to 1, got %d", m.activeTab)
+	}
+	if cmd == nil {
+		t.Error("expected a load command after switching tabs")
+	}
+}
+
+func TestTabHitTest_MissOutsideAnyTabDoesNothing(t *testing.T) {
+	m := Model{width: 100, height: 20, months: []string{"2026-07", "2026-06"}, activeTab: 0}
+	mi, _ := m.Update(tea.MouseMsg{X: 90, Y: 2, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = mi.(Model)
+	if m.activeTab != 0 {
+		t.Errorf("expected click past all tabs to leave activeTab unchanged, got %d", m.activeTab)
+	}
+}
+
+func TestRowHitTest_ClickMovesCursorToThatTransaction(t *testing.T) {
+	m := Model{
+		width: 100, height: 20,
+		txs: []models.Transaction{
+			{Description: "A"}, {Description: "B"}, {Description: "C"},
+		},
+	}
+	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = mi.(Model)
+	if m.cursor != 1 {
+		t.Errorf("expected click on second row to move cursor to 1, got %d", m.cursor)
+	}
+}
+
+func TestRowHitTest_ClickBelowListDoesNothing(t *testing.T) {
+	m := Model{
+		width: 100, height: 20,
+		txs: []models.Transaction{{Description: "A"}, {Description: "B"}},
+	}
+	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: 15, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = mi.(Model)
+	if m.cursor != 0 {
+		t.Errorf("expected click below the list to leave cursor unchanged, got %d", m.cursor)
+	}
+}
+
+func TestRowHitTest_RespectsScrollWindow(t *testing.T) {
+	// With more transactions than fit on screen and cursor scrolled down,
+	// a click must map to the transaction actually visible at that row,
+	// not naively to txs[y - listStartRow].
+	var txs []models.Transaction
+	for i := 0; i < 30; i++ {
+		txs = append(txs, models.Transaction{Description: fmt.Sprintf("tx%d", i)})
+	}
+	m := Model{width: 100, height: 15, txs: txs, cursor: 20}
+
+	listH := m.height - m.listStartRow() - 1
+	winStart := m.cursor - listH + 1
+	got := m.rowHitTest(m.listStartRow()) // click on the first visible row
+	if got != winStart {
+		t.Errorf("expected click on first visible row to hit tx index %d (scroll window start), got %d", winStart, got)
+	}
 }

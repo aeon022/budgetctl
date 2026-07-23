@@ -241,6 +241,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.cursor < len(m.txs)-1 {
 				m.cursor++
 			}
+		case tea.MouseButtonLeft:
+			if msg.Action != tea.MouseActionPress || m.view != viewList {
+				return m, nil
+			}
+			if i := m.tabHitTest(msg.X, msg.Y); i >= 0 {
+				if i != m.activeTab {
+					m.activeTab = i
+					m.cursor = 0
+					return m, loadCmd(m.activeMonth(), m.searchQ)
+				}
+				return m, nil
+			}
+			if i := m.rowHitTest(msg.Y); i >= 0 {
+				m.cursor = i
+			}
 		}
 		return m, nil
 
@@ -581,6 +596,70 @@ func (m Model) renderHeader(section string) string {
 		styleDivider.Render(strings.Repeat("─", m.width)) + "\n"
 }
 
+// listStartRow returns the row (0-indexed within the rendered View()) the
+// first transaction row appears on: header title(1) + rule(1) + tabs(1) +
+// divider(1), plus any active search/categorize prompt. Shared by
+// renderList (to size the visible window) and the mouse hit-test helpers
+// below, so a click always lands on the row it visually appears to.
+func (m Model) listStartRow() int {
+	row := 4
+	if m.searching {
+		row += 2
+	}
+	if m.searchQ != "" {
+		row++
+	}
+	if m.categorizing {
+		row++
+	}
+	return row
+}
+
+// tabHitTest returns the month index at column x on the tab row, or -1 if
+// the click didn't land on a tab.
+func (m Model) tabHitTest(x, y int) int {
+	const tabRow = 2 // header title(0) + rule(1) + tabs(2)
+	if y != tabRow || len(m.months) == 0 {
+		return -1
+	}
+	col := 0
+	for i, mo := range m.months {
+		w := lipgloss.Width(styleTabInact.Render(mo))
+		if i == m.activeTab {
+			w = lipgloss.Width(styleTabActive.Render(mo))
+		}
+		if x >= col && x < col+w {
+			return i
+		}
+		col += w
+	}
+	return -1
+}
+
+// rowHitTest returns the transaction index at row y, or -1 if the click
+// landed outside the visible list rows. Mirrors the exact scroll-window
+// math renderList uses so a click lands on the transaction it visually
+// appears to be over.
+func (m Model) rowHitTest(y int) int {
+	idx := y - m.listStartRow()
+	if idx < 0 || len(m.txs) == 0 {
+		return -1
+	}
+	listH := m.height - m.listStartRow() - 1
+	if listH < 1 {
+		listH = 1
+	}
+	winStart := 0
+	if m.cursor >= listH {
+		winStart = m.cursor - listH + 1
+	}
+	txIdx := winStart + idx
+	if txIdx >= len(m.txs) {
+		return -1
+	}
+	return txIdx
+}
+
 func (m Model) renderList() string {
 	var b strings.Builder
 	w := m.width
@@ -604,21 +683,17 @@ func (m Model) renderList() string {
 	}
 	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
 
-	overhead := 5 // header + rule + tabs + divider + statusbar
 	if m.searching {
 		b.WriteString("  " + m.searchInput.View() + "\n\n")
-		overhead += 2
 	}
 	if m.searchQ != "" {
 		b.WriteString(styleMuted.Render("  /"+m.searchQ) + "\n")
-		overhead++
 	}
 	if m.categorizing {
 		b.WriteString("  " + styleCategory.Render("category: ") + m.catInput.View() + "\n")
-		overhead++
 	}
 
-	listH := m.height - overhead
+	listH := m.height - m.listStartRow() - 1 // -1 for the trailing status bar
 	if listH < 1 {
 		listH = 1
 	}
