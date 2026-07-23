@@ -552,18 +552,25 @@ func (m Model) View() string {
 	}
 }
 
+// renderHeader draws the one header shared by every view: app name +
+// current section on the left, live date on the right, rule underneath.
+// section is what changes ("Transactions", "Summary", "New Entry", "Help").
+func (m Model) renderHeader(section string) string {
+	left := styleHeader.Render("budgetctl") + styleMuted.Render(" · "+section)
+	right := styleMuted.Render(time.Now().Format("Mon, 02 Jan 2006"))
+	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if pad < 1 {
+		pad = 1
+	}
+	return left + strings.Repeat(" ", pad) + right + "\n" +
+		styleDivider.Render(strings.Repeat("─", m.width)) + "\n"
+}
+
 func (m Model) renderList() string {
 	var b strings.Builder
 	w := m.width
 
-	// ── app header ──
-	appName := styleHeader.Render("budgetctl")
-	dateStr := styleMuted.Render(time.Now().Format("Mon, 02 Jan 2006"))
-	pad := w - lipgloss.Width(appName) - lipgloss.Width(dateStr)
-	if pad < 1 {
-		pad = 1
-	}
-	b.WriteString(appName + strings.Repeat(" ", pad) + dateStr + "\n")
+	b.WriteString(m.renderHeader("Transactions"))
 
 	// ── month tab bar ──
 	var parts []string
@@ -582,7 +589,7 @@ func (m Model) renderList() string {
 	}
 	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
 
-	overhead := 4 // header + tabs + divider + statusbar
+	overhead := 5 // header + rule + tabs + divider + statusbar
 	if m.searching {
 		b.WriteString("  " + m.searchInput.View() + "\n\n")
 		overhead += 2
@@ -601,6 +608,7 @@ func (m Model) renderList() string {
 		listH = 1
 	}
 
+	rowW := w - 2
 	if len(m.txs) == 0 {
 		b.WriteString("\n" + styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
 	} else {
@@ -611,11 +619,11 @@ func (m Model) renderList() string {
 		end := min(len(m.txs), start+listH)
 		for i := start; i < end; i++ {
 			t := &m.txs[i]
-			line := formatTxRow(t, w)
+			line := formatTxRow(t, rowW)
 			if i == m.cursor {
-				line = styleSelected.Width(w).Render(line)
+				line = styleSelected.Width(rowW).Render(line)
 			}
-			b.WriteString(line + "\n")
+			b.WriteString("  " + line + "\n")
 		}
 	}
 
@@ -645,12 +653,12 @@ func (m Model) renderList() string {
 		bar = styleHelp.Render("n:new  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ?:help  q:quit")
 	}
 	right := netStr + posStr
-	pad = w - lipgloss.Width(bar) - lipgloss.Width(right)
+	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
 	if pad < 0 {
 		pad = 0
 	}
 	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
-	b.WriteString(bar + strings.Repeat(" ", pad) + right)
+	b.WriteString("  " + bar + strings.Repeat(" ", pad) + right)
 	return b.String()
 }
 
@@ -660,7 +668,7 @@ func (m Model) renderForm() string {
 	if m.editTx != nil {
 		heading = "Edit Entry"
 	}
-	b.WriteString("\n  " + styleHeader.Render(heading) + "\n\n")
+	b.WriteString(m.renderHeader(heading) + "\n")
 	for i := range m.form {
 		label := formLabels[i]
 		labelStyle := styleMuted
@@ -683,7 +691,7 @@ func (m Model) renderHelp() string {
 	section := func(t string) string { return "\n  " + styleSummaryH.Render(t) + "\n" }
 
 	var b strings.Builder
-	b.WriteString("\n  " + styleHeader.Render("budgetctl") + styleHelp.Render(" — budget from the terminal") + "\n")
+	b.WriteString(m.renderHeader("Help"))
 	b.WriteString(section("Navigation"))
 	b.WriteString(row("j / ↓", "move down"))
 	b.WriteString(row("k / ↑", "move up"))
@@ -709,6 +717,8 @@ func (m Model) renderHelp() string {
 func (m Model) renderSummaryView() string {
 	var b strings.Builder
 
+	b.WriteString(m.renderHeader("Summary"))
+
 	// month tabs
 	var parts []string
 	for i, mo := range m.months {
@@ -723,14 +733,14 @@ func (m Model) renderSummaryView() string {
 	}
 	b.WriteString(styleDivider.Render(strings.Repeat("─", m.width)) + "\n")
 
-	m.vp.Height = m.height - 5
+	m.vp.Height = m.height - 7
 	b.WriteString(m.vp.View())
 
 	pct := ""
 	if m.vp.TotalLineCount() > m.vp.Height {
 		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
 	}
-	b.WriteString("\n" + styleHelp.Render("esc:back  tab:month  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
+	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
 	return b.String()
 }
 
@@ -740,7 +750,7 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, width int) st
 	}
 	var b strings.Builder
 
-	b.WriteString(styleSummaryH.Render(fmt.Sprintf("Summary: %s", sum.Month)) + "\n\n")
+	b.WriteString("  " + styleSummaryH.Render(fmt.Sprintf("Summary: %s", sum.Month)) + "\n\n")
 
 	incomeColor := styleIncome
 	expColor := styleExpense
@@ -752,7 +762,7 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, width int) st
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Income:", incomeColor.Render(fmt.Sprintf("%+.2f €", sum.Income))))
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Expenses:", expColor.Render(fmt.Sprintf("%+.2f €", sum.Expenses))))
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Net:", netColor.Render(fmt.Sprintf("%+.2f €", sum.Net))))
-	b.WriteString("\n" + styleSummaryH.Render("By category:") + "\n\n")
+	b.WriteString("\n  " + styleSummaryH.Render("By category:") + "\n\n")
 
 	type kv struct {
 		k string
@@ -798,7 +808,7 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, width int) st
 
 	// ── Goals ────────────────────────────────────────────────────────────────
 	if len(goals) > 0 {
-		b.WriteString("\n" + styleSummaryH.Render("Budget goals:") + "\n\n")
+		b.WriteString("\n  " + styleSummaryH.Render("Budget goals:") + "\n\n")
 		for _, gs := range goals {
 			filled := int(gs.Percent / 100 * float64(barW))
 			if filled > barW {
