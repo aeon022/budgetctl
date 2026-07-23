@@ -36,7 +36,10 @@ func TestImportN26(t *testing.T) {
 	if txs[0].Account != "N26" {
 		t.Errorf("want account N26, got %q", txs[0].Account)
 	}
-	if txs[0].Description != "REWE Markt — Groceries" {
+	if txs[0].Payee != "REWE Markt" {
+		t.Errorf("unexpected payee: %q", txs[0].Payee)
+	}
+	if txs[0].Description != "Groceries" {
 		t.Errorf("unexpected description: %q", txs[0].Description)
 	}
 	if txs[0].Date.Format("2006-01-02") != "2026-01-15" {
@@ -74,6 +77,12 @@ func TestImportING(t *testing.T) {
 	if txs[0].Date.Format("02.01.2006") != "14.01.2026" {
 		t.Errorf("unexpected date: %v", txs[0].Date)
 	}
+	if txs[0].Payee != "Netflix" {
+		t.Errorf("unexpected payee: %q", txs[0].Payee)
+	}
+	if txs[0].Description != "Abo Januar" {
+		t.Errorf("unexpected description: %q", txs[0].Description)
+	}
 }
 
 func TestImportDKB(t *testing.T) {
@@ -93,6 +102,12 @@ func TestImportDKB(t *testing.T) {
 	}
 	if txs[0].Account != "DKB" {
 		t.Errorf("want account DKB, got %q", txs[0].Account)
+	}
+	if txs[0].Payee != "Stadtwerke" {
+		t.Errorf("unexpected payee: %q", txs[0].Payee)
+	}
+	if txs[0].Description != "Strom Abschlag" {
+		t.Errorf("unexpected description: %q", txs[0].Description)
 	}
 }
 
@@ -222,6 +237,50 @@ func TestImportATUmsatzliste(t *testing.T) {
 	}
 	if txs[1].Amount != 183.00 {
 		t.Errorf("want amount 183.00 (income), got %v", txs[1].Amount)
+	}
+	if txs[1].Payee != "Wanting Shi-Weiher" {
+		t.Errorf("expected payee split out of the 'Auftraggeber:' label, got %q", txs[1].Payee)
+	}
+	if txs[1].Description != "lunch and dinner" {
+		t.Errorf("expected purpose split out of the 'Zahlungsreferenz:' fallback, got %q", txs[1].Description)
+	}
+}
+
+func TestSplitATFields(t *testing.T) {
+	cases := []struct {
+		name, blob, wantPayee, wantPurpose string
+	}{
+		{
+			"payee + Verwendungszweck, IBAN/BIC noise stripped",
+			"Zahlungsempfänger: T-Mobile Austria GmbH Verwendungszweck: Magenta Rechnung IBAN Zahlungsempfänger: AT82 BIC Zahlungsempfänger: XXX",
+			"T-Mobile Austria GmbH", "Magenta Rechnung",
+		},
+		{
+			"no payee label, Verwendungszweck only",
+			"Verwendungszweck: GRAZ MOBIL GRAZ 8010 Zahlungsreferenz: ePAYMENT 69,00 AT D1 Kartenfolge-Nr.: 1",
+			"", "GRAZ MOBIL GRAZ 8010",
+		},
+		{
+			"no labels at all recognized, falls back to the whole blob",
+			"SPAR 2361 D1 15.07. 08:57",
+			"", "SPAR 2361 D1 15.07. 08:57",
+		},
+		{
+			"short 'Empfänger:' label variant (Dauerauftrag)",
+			"Dauerauftrag 38000-1 Empfänger: Braucampus Zahlungsreferenz: Mitgliedsbeitrag IBAN Empfänger: AT03",
+			"Braucampus", "Mitgliedsbeitrag",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			payee, purpose := splitATFields(c.blob)
+			if payee != c.wantPayee {
+				t.Errorf("payee = %q, want %q", payee, c.wantPayee)
+			}
+			if purpose != c.wantPurpose {
+				t.Errorf("purpose = %q, want %q", purpose, c.wantPurpose)
+			}
+		})
 	}
 }
 

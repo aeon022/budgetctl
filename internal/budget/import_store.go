@@ -35,7 +35,7 @@ func ImportFile(ctx context.Context, s *store.Store, path, account string, useAI
 			txs[i].Account = account
 		}
 		if txs[i].Category == "" && len(rules) > 0 {
-			txs[i].Category = Categorize(txs[i].Description, rules)
+			txs[i].Category = Categorize(txs[i].Payee+" "+txs[i].Description, rules)
 		}
 		if err := s.Upsert(ctx, &txs[i]); err == nil {
 			res.Imported++

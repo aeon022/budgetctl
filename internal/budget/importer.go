@@ -91,10 +91,6 @@ func parseN26(r io.Reader, source string) ([]models.Transaction, error) {
 		if err != nil {
 			continue
 		}
-		desc := clean(row[1])
-		if row[4] != "" {
-			desc += " — " + clean(row[4])
-		}
 		amount, err := parseAmount(row[5])
 		if err != nil {
 			continue
@@ -103,7 +99,8 @@ func parseN26(r io.Reader, source string) ([]models.Transaction, error) {
 		txs = append(txs, models.Transaction{
 			ID:          txID(source, raw),
 			Date:        date,
-			Description: desc,
+			Payee:       clean(row[1]),
+			Description: clean(row[4]),
 			Amount:      amount,
 			Account:     "N26",
 			Source:      source,
@@ -147,10 +144,6 @@ func parseING(r io.Reader, source string) ([]models.Transaction, error) {
 		if err != nil {
 			continue
 		}
-		desc := clean(row[2])
-		if row[4] != "" {
-			desc += " — " + clean(row[4])
-		}
 		amount, err := parseAmountDE(row[5])
 		if err != nil {
 			continue
@@ -159,7 +152,8 @@ func parseING(r io.Reader, source string) ([]models.Transaction, error) {
 		txs = append(txs, models.Transaction{
 			ID:          txID(source, raw),
 			Date:        date,
-			Description: desc,
+			Payee:       clean(row[2]),
+			Description: clean(row[4]),
 			Amount:      amount,
 			Account:     "ING",
 			Source:      source,
@@ -198,10 +192,6 @@ func parseDKB(r io.Reader, source string) ([]models.Transaction, error) {
 		if err != nil {
 			continue
 		}
-		desc := clean(row[3])
-		if row[4] != "" {
-			desc += " — " + clean(row[4])
-		}
 		amount, err := parseAmountDE(row[7])
 		if err != nil {
 			continue
@@ -210,7 +200,8 @@ func parseDKB(r io.Reader, source string) ([]models.Transaction, error) {
 		txs = append(txs, models.Transaction{
 			ID:          txID(source, raw),
 			Date:        date,
-			Description: desc,
+			Payee:       clean(row[3]),
+			Description: clean(row[4]),
 			Amount:      amount,
 			Account:     "DKB",
 			Source:      source,
@@ -248,22 +239,80 @@ func parseATUmsatzliste(r io.Reader, source string) ([]models.Transaction, error
 		if err != nil {
 			continue
 		}
-		desc := clean(row[1])
 		amount, err := parseAmountDE(row[3])
 		if err != nil {
 			continue
 		}
+		payee, purpose := splitATFields(row[1])
 		raw := strings.Join(row, ";")
 		txs = append(txs, models.Transaction{
 			ID:          txID(source, raw),
 			Date:        date,
-			Description: desc,
+			Payee:       payee,
+			Description: purpose,
 			Amount:      amount,
 			Source:      source,
 			Raw:         raw,
 		})
 	}
 	return txs, nil
+}
+
+// atFieldLabels matches the labeled sub-fields packed into an AT-Umsatzliste
+// description blob, e.g. "Zahlungsempfänger: X Verwendungszweck: Y IBAN
+// Zahlungsempfänger: AT... BIC Zahlungsempfänger: ...". The "IBAN|BIC \S+:"
+// alternative MUST come first: it matches (and so consumes) compound labels
+// like "IBAN Zahlungsempfänger:" before the bare "Zahlungsempfänger:"
+// alternative below gets a chance to — regexp's leftmost-first matching
+// means once "IBAN Zahlungsempfänger:" matches starting at "IBAN", the
+// "Zahlungsempfänger:" substring inside it is already consumed and never
+// re-examined as a separate match.
+var atFieldLabels = regexp.MustCompile(
+	`(?:IBAN|BIC)\s+\S+:|` +
+		`(Zahlungsempfänger|Auftraggeber|Empfänger|Verwendungszweck|Zahlungsreferenz|Empfänger-Kennung|Auftraggeberreferenz|Mandat|Kartenfolge-Nr\.?):`,
+)
+
+// splitATFields best-effort splits an AT-Umsatzliste description blob into
+// a counterparty name (payee) and purpose text, for display as separate
+// table columns. Falls back to the whole cleaned blob as purpose when
+// nothing recognizable is found — never loses information, since Raw still
+// holds the original CSV row for the detail popup.
+func splitATFields(blob string) (payee, purpose string) {
+	locs := atFieldLabels.FindAllStringSubmatchIndex(blob, -1)
+	zahlungsreferenz := ""
+	for i, loc := range locs {
+		if loc[2] < 0 { // unnamed (noise) alternative matched, no label captured
+			continue
+		}
+		label := blob[loc[2]:loc[3]]
+		valEnd := len(blob)
+		if i+1 < len(locs) {
+			valEnd = locs[i+1][0]
+		}
+		value := clean(blob[loc[1]:valEnd])
+
+		switch label {
+		case "Zahlungsempfänger", "Auftraggeber", "Empfänger":
+			if payee == "" {
+				payee = value
+			}
+		case "Verwendungszweck":
+			if purpose == "" {
+				purpose = value
+			}
+		case "Zahlungsreferenz":
+			if zahlungsreferenz == "" {
+				zahlungsreferenz = value
+			}
+		}
+	}
+	if purpose == "" {
+		purpose = zahlungsreferenz
+	}
+	if purpose == "" {
+		purpose = clean(blob)
+	}
+	return payee, purpose
 }
 
 // ── Generic CSV ───────────────────────────────────────────────────────────────

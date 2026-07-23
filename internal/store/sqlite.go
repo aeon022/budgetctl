@@ -52,18 +52,30 @@ func (s *Store) migrate() error {
 			monthly  REAL NOT NULL DEFAULT 0
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// payee was added after the initial schema — CREATE TABLE IF NOT EXISTS
+	// above is a no-op on a database that already has the table, so add the
+	// column explicitly and ignore the "already there" case.
+	if _, err := s.db.Exec(`ALTER TABLE transactions ADD COLUMN payee TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Upsert(ctx context.Context, t *models.Transaction) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO transactions (id,date,description,amount,category,account,source,raw,imported_at)
-		VALUES (?,?,?,?,?,?,?,?,?)
+		INSERT INTO transactions (id,date,payee,description,amount,category,account,source,raw,imported_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			category=excluded.category, imported_at=excluded.imported_at
 	`,
 		t.ID,
 		t.Date.UTC().Format("2006-01-02"),
+		t.Payee,
 		t.Description,
 		t.Amount,
 		t.Category,
@@ -84,7 +96,7 @@ type Filter struct {
 }
 
 func (s *Store) List(ctx context.Context, f Filter) ([]models.Transaction, error) {
-	q := `SELECT id,date,description,amount,category,account,source FROM transactions WHERE 1=1`
+	q := `SELECT id,date,payee,description,amount,category,account,source FROM transactions WHERE 1=1`
 	var args []any
 	if f.Month != "" {
 		q += ` AND date LIKE ?`
@@ -99,8 +111,8 @@ func (s *Store) List(ctx context.Context, f Filter) ([]models.Transaction, error
 		args = append(args, f.Account)
 	}
 	if f.Query != "" {
-		q += ` AND description LIKE ?`
-		args = append(args, "%"+f.Query+"%")
+		q += ` AND (description LIKE ? OR payee LIKE ?)`
+		args = append(args, "%"+f.Query+"%", "%"+f.Query+"%")
 	}
 	q += ` ORDER BY date DESC`
 	if f.Limit > 0 {
@@ -340,22 +352,25 @@ func (s *Store) ApplyRules(ctx context.Context) (int, error) {
 	if len(rules) == 0 {
 		return 0, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,description FROM transactions`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,payee,description FROM transactions`)
 	if err != nil {
 		return 0, err
 	}
-	type row struct{ id, desc string }
+	type row struct{ id, payee, desc string }
 	var all []row
 	for rows.Next() {
 		var r row
-		_ = rows.Scan(&r.id, &r.desc)
+		_ = rows.Scan(&r.id, &r.payee, &r.desc)
 		all = append(all, r)
 	}
 	rows.Close()
 
 	count := 0
 	for _, tx := range all {
-		desc := strings.ToLower(tx.desc)
+		// Match against payee+description together — the merchant/
+		// counterparty name (the most useful signal for rules like
+		// "netflix"/"rewe") lives in payee for formats that separate it.
+		desc := strings.ToLower(tx.payee + " " + tx.desc)
 		for _, rule := range rules {
 			if strings.Contains(desc, rule.Pattern) {
 				_ = s.SetCategory(ctx, tx.id, rule.Category)
@@ -437,7 +452,7 @@ func scanTx(rows *sql.Rows) ([]models.Transaction, error) {
 	for rows.Next() {
 		var t models.Transaction
 		var dateStr string
-		if err := rows.Scan(&t.ID, &dateStr, &t.Description, &t.Amount,
+		if err := rows.Scan(&t.ID, &dateStr, &t.Payee, &t.Description, &t.Amount,
 			&t.Category, &t.Account, &t.Source); err != nil {
 			return nil, err
 		}

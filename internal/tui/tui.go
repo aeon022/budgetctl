@@ -93,6 +93,7 @@ var (
 	styleIncome    = lipgloss.NewStyle().Foreground(colorGreen)
 	styleExpense   = lipgloss.NewStyle().Foreground(colorRed)
 	styleCategory  = lipgloss.NewStyle().Foreground(colorAmber)
+	stylePayee     = lipgloss.NewStyle().Foreground(colorBlue)
 	styleSummaryH  = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
 	styleToday     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "214", Dark: "220"}).Bold(true)
 	styleDateWeek  = lipgloss.NewStyle().Foreground(colorMuted)
@@ -895,6 +896,9 @@ func (m Model) renderDetailPopup() string {
 	if t.Source != "" {
 		fixedRows++
 	}
+	if t.Payee != "" {
+		fixedRows++
+	}
 	if hasRaw {
 		fixedRows += 2 // "Raw:" header + its own blank separator line
 	}
@@ -914,6 +918,9 @@ func (m Model) renderDetailPopup() string {
 	b.WriteString(styleHeader.Render("Transaction") + "\n\n")
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Date:", t.Date.Format("2006-01-02")))
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Amount:", amtStyle.Render(fmt.Sprintf("%+.2f €", t.Amount))))
+	if t.Payee != "" {
+		b.WriteString(fmt.Sprintf("  %-12s %s\n", "Payee:", stylePayee.Render(t.Payee)))
+	}
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Category:", styleCategory.Render(cat)))
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Account:", acct))
 	if t.Source != "" {
@@ -1624,6 +1631,9 @@ func (m *Model) setStatus(s string) {
 	m.statusTime = time.Now()
 }
 
+// payeeColW is the fixed display width of the Payee column in formatTxRow.
+const payeeColW = 20
+
 func formatTxRow(t *models.Transaction, width int) string {
 	amtStr := fmt.Sprintf("%+8.2f€", t.Amount)
 	amtStyled := ""
@@ -1637,27 +1647,59 @@ func formatTxRow(t *models.Transaction, width int) string {
 	if cat == "" {
 		cat = "—"
 	}
-	catStyled := styleCategory.Render(fmt.Sprintf("%-16s", cat))
+	// padRunes, not fmt's "%-*s" — that pads by BYTE length, which
+	// misaligns columns the moment a category/payee contains a multi-byte
+	// rune (umlauts are routine in German bank text: ä/ö/ü/ß).
+	catStyled := styleCategory.Render(padRunes(truncRunes(cat, 16), 16))
 
 	dateStr := t.Date.Format("2006-01-02")
 	dateStyled := coloredDate(dateStr, t.Date)
 
-	// description truncated
-	descW := width - 12 - 10 - 18 - 4
-	if descW < 10 {
-		descW = 10
+	payee := t.Payee
+	if payee == "" {
+		payee = "—"
 	}
-	desc := t.Description
-	if len(desc) > descW {
-		desc = desc[:descW-1] + "…"
-	}
+	payeeStyled := stylePayee.Render(padRunes(truncRunes(payee, payeeColW), payeeColW))
 
-	return fmt.Sprintf("%s  %s  %s  %s",
+	// purpose (Description) fills whatever's left — truncated by RUNE, not
+	// byte: German bank text is full of multi-byte umlauts (ä/ö/ü/ß), and
+	// byte-slicing mid-rune corrupts the output.
+	purposeW := width - 12 - 10 - 18 - (payeeColW + 2) - 4
+	if purposeW < 10 {
+		purposeW = 10
+	}
+	purpose := truncRunes(t.Description, purposeW)
+
+	return fmt.Sprintf("%s  %s  %s  %s  %s",
 		dateStyled,
 		amtStyled,
 		catStyled,
-		desc,
+		payeeStyled,
+		purpose,
 	)
+}
+
+// truncRunes truncates s to at most n runes, appending "…" if it had to cut
+// (the ellipsis itself counts toward n). Rune-safe, unlike raw byte slicing.
+func truncRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// padRunes right-pads s with spaces to n runes. Assumes s already fits
+// within n runes (callers truncate first); no-ops otherwise.
+func padRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-len(r))
 }
 
 func coloredDate(s string, t time.Time) string {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/aeon022/budgetctl/internal/budget"
 	"github.com/aeon022/budgetctl/internal/config"
@@ -774,5 +775,42 @@ func TestWrapCapped_TruncatesPathologicallyLongFields(t *testing.T) {
 	got := wrapCapped(huge, 70, 400)
 	if len([]rune(got)) > 401 { // 400 + the ellipsis rune
 		t.Errorf("expected wrapCapped to bound output to ~400 runes, got %d", len([]rune(got)))
+	}
+}
+
+func TestFormatTxRow_ShowsPayeeAndPurposeAsSeparateColumns(t *testing.T) {
+	tr := &models.Transaction{Payee: "Wanting Shi-Weiher", Description: "lunch and dinner", Amount: 183}
+	row := formatTxRow(tr, 100)
+	if !strings.Contains(row, "Wanting Shi-Weiher") || !strings.Contains(row, "lunch and dinner") {
+		t.Errorf("expected both payee and description in the row, got %q", row)
+	}
+}
+
+func TestFormatTxRow_EmptyPayeeShowsDash(t *testing.T) {
+	tr := &models.Transaction{Payee: "", Description: "GRAZ MOBIL GRAZ 8010", Amount: -69}
+	row := formatTxRow(tr, 100)
+	if !strings.Contains(row, "—") {
+		t.Errorf("expected a dash placeholder for an empty payee, got %q", row)
+	}
+}
+
+func TestTruncRunes_DoesNotSplitMultiByteRunes(t *testing.T) {
+	// "Prämie" — byte-slicing at a fixed offset would cut mid-rune inside
+	// "ä" (2 UTF-8 bytes) and produce invalid UTF-8.
+	got := truncRunes("Prämie Wohnen & Freizeit", 8)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated result is not valid UTF-8: %q", got)
+	}
+	if want := "Prämie …"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestPadRunes_PadsByRuneCountNotByteCount(t *testing.T) {
+	// "Österreich" has runes < bytes (the Ö is 2 bytes) — byte-based
+	// padding (fmt's "%-*s") would under-pad and misalign the next column.
+	got := padRunes("Ö", 3)
+	if r := []rune(got); len(r) != 3 {
+		t.Errorf("expected padRunes to pad to 3 runes, got %d runes: %q", len(r), got)
 	}
 }

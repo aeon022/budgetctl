@@ -46,6 +46,73 @@ func TestUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestUpsertAndList_RoundTripsPayee(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	entry := tx("t1", -42.30)
+	entry.Payee = "Rewe Supermarkt"
+	if err := s.Upsert(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.List(ctx, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Payee != "Rewe Supermarkt" {
+		t.Fatalf("expected payee to round-trip through Upsert/List, got %+v", got)
+	}
+}
+
+func TestMigrate_AddingPayeeColumnIsIdempotent(t *testing.T) {
+	// Regression guard: payee was added to an already-shipped schema via
+	// ALTER TABLE, not baked into CREATE TABLE IF NOT EXISTS — opening the
+	// same database a second time (simulating an existing user's DB on a
+	// second run) must not error on "duplicate column".
+	path := filepath.Join(t.TempDir(), "budget.db")
+	s1, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1.Close()
+
+	s2, err := New(path)
+	if err != nil {
+		t.Fatalf("expected re-opening an existing DB to succeed, got: %v", err)
+	}
+	s2.Close()
+}
+
+func TestApplyRules_MatchesAgainstPayeeToo(t *testing.T) {
+	// N26/ING/DKB/AT-Umsatzliste all split the merchant name into Payee
+	// now — a rule like "rewe" must still match even though "REWE" no
+	// longer appears in Description.
+	s := testStore(t)
+	ctx := context.Background()
+
+	entry := tx("t1", -42.30)
+	entry.Payee = "REWE Markt GmbH"
+	entry.Description = "Groceries"
+	if err := s.Upsert(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRule(ctx, "rewe", "groceries"); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.ApplyRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected ApplyRules to categorize 1 transaction via its payee, got %d", n)
+	}
+	got, _ := s.List(ctx, Filter{})
+	if len(got) != 1 || got[0].Category != "groceries" {
+		t.Fatalf("expected category 'groceries' set from the payee match, got %+v", got)
+	}
+}
+
 func TestUpdate(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

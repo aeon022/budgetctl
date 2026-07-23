@@ -279,7 +279,7 @@ func handleImport(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 			txs[i].Account = account
 		}
 		if txs[i].Category == "" {
-			txs[i].Category = budget.Categorize(txs[i].Description, rules)
+			txs[i].Category = budget.Categorize(txs[i].Payee+" "+txs[i].Description, rules)
 		}
 		_ = s.Upsert(ctx, &txs[i])
 	}
