@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/aeon022/budgetctl/internal/budget"
@@ -151,7 +152,7 @@ func TestEditFlow(t *testing.T) {
 	_ = s.Close()
 
 	// load list
-	m = feed(t, m, loadCmd("", "", ""))
+	m = feed(t, m, loadCmd("", ""))
 	if len(m.txs) != 0 {
 		t.Fatalf("expected empty list, got %d", len(m.txs))
 	}
@@ -167,7 +168,7 @@ func TestDeleteConfirmCancel(t *testing.T) {
 	m, _ = typeKeys(t, m, "Temp", "enter")
 	m, cmd := typeKeys(t, m, "-1", "enter", "enter")
 	m = feed(t, m, cmd)
-	m = feed(t, m, loadCmd("", "", ""))
+	m = feed(t, m, loadCmd("", ""))
 	if len(m.txs) != 1 {
 		t.Fatalf("setup failed: %d txs", len(m.txs))
 	}
@@ -189,7 +190,7 @@ func TestDeleteConfirmCancel(t *testing.T) {
 		t.Fatal("y must trigger delete command")
 	}
 	m = feed(t, m, cmd)
-	m = feed(t, m, loadCmd("", "", ""))
+	m = feed(t, m, loadCmd("", ""))
 	if len(m.txs) != 0 {
 		t.Fatalf("entry not deleted: %+v", m.txs)
 	}
@@ -780,7 +781,7 @@ func TestWrapCapped_TruncatesPathologicallyLongFields(t *testing.T) {
 
 func TestFormatTxRow_ShowsPayeeAndPurposeAsSeparateColumns(t *testing.T) {
 	tr := &models.Transaction{Payee: "Wanting Shi-Weiher", Description: "lunch and dinner", Amount: 183}
-	row := formatTxRow(tr, 100)
+	row := formatTxRow(tr, 100, "")
 	if !strings.Contains(row, "Wanting Shi-Weiher") || !strings.Contains(row, "lunch and dinner") {
 		t.Errorf("expected both payee and description in the row, got %q", row)
 	}
@@ -788,7 +789,7 @@ func TestFormatTxRow_ShowsPayeeAndPurposeAsSeparateColumns(t *testing.T) {
 
 func TestFormatTxRow_EmptyPayeeShowsDash(t *testing.T) {
 	tr := &models.Transaction{Payee: "", Description: "GRAZ MOBIL GRAZ 8010", Amount: -69}
-	row := formatTxRow(tr, 100)
+	row := formatTxRow(tr, 100, "")
 	if !strings.Contains(row, "—") {
 		t.Errorf("expected a dash placeholder for an empty payee, got %q", row)
 	}
@@ -812,5 +813,106 @@ func TestPadRunes_PadsByRuneCountNotByteCount(t *testing.T) {
 	got := padRunes("Ö", 3)
 	if r := []rune(got); len(r) != 3 {
 		t.Errorf("expected padRunes to pad to 3 runes, got %d runes: %q", len(r), got)
+	}
+}
+
+func TestFilterTxs_FuzzyMatchesPayeeOrDescription(t *testing.T) {
+	txs := []models.Transaction{
+		{Payee: "Apple", Description: "APPLE.COM/BILL"},
+		{Payee: "", Description: "budgetctl release"},
+		{Payee: "Amazon", Description: "order"},
+	}
+	got := filterTxs(txs, "bgt")
+	if len(got) != 1 || got[0].Description != "budgetctl release" {
+		t.Errorf("expected fuzzy 'bgt' to match only the description, got %+v", got)
+	}
+}
+
+func TestFilterTxs_PreservesOriginalOrderRatherThanRankingByMatchQuality(t *testing.T) {
+	// Regression test: unlike habctl's filterHabits, filterTxs must NOT
+	// re-rank by match quality — transactions are naturally date-ordered
+	// (newest first from the SQL query), and re-sorting by fuzzy score
+	// would scramble that chronological order.
+	txs := []models.Transaction{
+		{Payee: "Zebra budgetctl", Date: mustParseDate(t, "2026-07-03")},
+		{Payee: "Abudgetctl", Date: mustParseDate(t, "2026-07-02")}, // closer fuzzy match, but should stay 2nd
+		{Payee: "budgetctl", Date: mustParseDate(t, "2026-07-01")},
+	}
+	got := filterTxs(txs, "budgetctl")
+	if len(got) != 3 {
+		t.Fatalf("expected all 3 to match, got %d", len(got))
+	}
+	if got[0].Payee != "Zebra budgetctl" || got[1].Payee != "Abudgetctl" || got[2].Payee != "budgetctl" {
+		t.Errorf("expected original (date-descending) order preserved, got %+v", got)
+	}
+}
+
+func TestFilterTxs_EmptyQueryReturnsAllUnfiltered(t *testing.T) {
+	txs := []models.Transaction{{Payee: "a"}, {Payee: "b"}}
+	got := filterTxs(txs, "")
+	if len(got) != 2 {
+		t.Errorf("expected empty query to return all transactions, got %d", len(got))
+	}
+}
+
+func mustParseDate(t *testing.T, s string) time.Time {
+	t.Helper()
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestSearchMode_FiltersLiveAsUserTypes(t *testing.T) {
+	m := New()
+	m.width, m.height = 100, 30
+	txs := []models.Transaction{
+		{Payee: "Apple", Description: "APPLE.COM/BILL"},
+		{Payee: "", Description: "budgetctl release"},
+	}
+	m.allTxs, m.txs = txs, txs
+
+	m, _ = typeKeys(t, m, "/")
+	if !m.searching {
+		t.Fatal("expected '/' to enter search mode")
+	}
+	m, _ = typeKeys(t, m, "b", "g", "t")
+	if len(m.txs) != 1 || m.txs[0].Description != "budgetctl release" {
+		t.Errorf("expected live filtering while typing (no enter needed), got %+v", m.txs)
+	}
+	if m.searchQ != "bgt" {
+		t.Errorf("expected searchQ to track the live input, got %q", m.searchQ)
+	}
+}
+
+func TestSearchMode_EscWhileTypingClearsFilterAndQuery(t *testing.T) {
+	m := New()
+	m.width, m.height = 100, 30
+	txs := []models.Transaction{{Payee: "", Description: "budgetctl release"}, {Payee: "Apple"}}
+	m.allTxs, m.txs = txs, txs
+
+	m, _ = typeKeys(t, m, "/", "b", "g", "t", "esc")
+	if m.searchQ != "" || len(m.txs) != 2 {
+		t.Errorf("expected esc to clear the query and restore all transactions, got searchQ=%q txs=%+v", m.searchQ, m.txs)
+	}
+}
+
+func TestSearchMode_EnterClosesInputWithoutReloadingFromDB(t *testing.T) {
+	m := New()
+	m.width, m.height = 100, 30
+	txs := []models.Transaction{{Payee: "", Description: "budgetctl release"}, {Payee: "Apple"}}
+	m.allTxs, m.txs = txs, txs
+
+	m, _ = typeKeys(t, m, "/", "b", "g", "t")
+	m, cmd := typeKeys(t, m, "enter")
+	if m.searching {
+		t.Error("expected enter to close the search input")
+	}
+	if cmd != nil {
+		t.Error("expected enter to NOT trigger a DB reload — filtering is already live/client-side")
+	}
+	if len(m.txs) != 1 {
+		t.Errorf("expected the filtered result to persist after closing the input, got %+v", m.txs)
 	}
 }

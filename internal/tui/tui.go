@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/sahilm/fuzzy"
 )
 
 // ── Views ─────────────────────────────────────────────────────────────────────
@@ -130,7 +131,8 @@ type Model struct {
 	width  int
 	height int
 
-	txs           []models.Transaction
+	txs           []models.Transaction // filtered (by searchQ) view of allTxs
+	allTxs        []models.Transaction // everything loaded for the current month/account scope
 	cursor        int
 	months        []string // ["2026-06", "2026-05", ...]
 	activeTab     int      // index into months; -1 = all
@@ -222,7 +224,7 @@ func Run() error {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadCmd("", "", ""), tea.WindowSize())
+	return tea.Batch(loadCmd("", ""), tea.WindowSize())
 }
 
 func (m Model) activeMonth() string {
@@ -260,7 +262,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp = viewport.New(msg.Width, m.height-6)
 
 	case txLoadedMsg:
-		m.txs = msg.txs
+		m.allTxs = msg.txs
+		m.txs = filterTxs(m.allTxs, m.searchQ)
 		m.summary = msg.sum
 		m.goals = msg.goals
 		m.trend = msg.trend
@@ -288,7 +291,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = viewList
 			m.editTx = nil
 			m.setStatus("saved")
-			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 
 	case txDeletedMsg:
@@ -296,7 +299,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		} else {
 			m.setStatus("deleted")
-			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 
 	case importParsedMsg:
@@ -342,7 +345,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i != m.activeTab {
 					m.activeTab = i
 					m.cursor = 0
-					return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+					return m, loadCmd(m.activeMonth(), m.activeAccountName())
 				}
 				return m, nil
 			}
@@ -350,7 +353,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i != m.activeAccount {
 					m.activeAccount = i
 					m.cursor = 0
-					return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+					return m, loadCmd(m.activeMonth(), m.activeAccountName())
 				}
 				return m, nil
 			}
@@ -531,7 +534,7 @@ func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case importDone:
 		m.view = viewList
 		m.importStep = importPickFile
-		return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+		return m, loadCmd(m.activeMonth(), m.activeAccountName())
 	}
 	return m, nil
 }
@@ -575,17 +578,22 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.searching {
 		switch msg.String() {
 		case "enter":
-			m.searchQ = m.searchInput.Value()
+			// Filtering already happened live as the user typed (below) —
+			// enter just closes the input box, no DB round-trip needed.
 			m.searching = false
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
 		case "esc":
 			m.searching = false
 			m.searchInput.SetValue("")
 			m.searchQ = ""
+			m.cursor = 0
+			m.txs = filterTxs(m.allTxs, "")
 		default:
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)
+			m.searchQ = m.searchInput.Value()
+			m.cursor = 0
+			m.txs = filterTxs(m.allTxs, m.searchQ)
 			return m, cmd
 		}
 		return m, nil
@@ -598,25 +606,25 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	case "shift+tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab - 1 + len(m.months)) % len(m.months)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	case "]":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), 1)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	case "[":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), -1)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.searchQ, m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	case "j", "down":
 		if m.cursor < len(m.txs)-1 {
@@ -686,7 +694,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.searchQ != "" {
 			m.searchQ = ""
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
+			m.txs = filterTxs(m.allTxs, "")
 		}
 	}
 	return m, nil
@@ -700,22 +708,22 @@ func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
-			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	case "shift+tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab - 1 + len(m.months)) % len(m.months)
-			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	case "]":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), 1)
-			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	case "[":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), -1)
-			return m, loadCmd(m.activeMonth(), "", m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName())
 		}
 	}
 	var cmd tea.Cmd
@@ -1261,9 +1269,15 @@ func (m Model) renderList() string {
 		end := min(len(m.txs), start+listH)
 		for i := start; i < end; i++ {
 			t := &m.txs[i]
-			line := formatTxRow(t, rowW)
+			var line string
 			if i == m.cursor {
-				line = styleSelected.Width(rowW).Render(line)
+				// The cursor row wraps its whole line in a single
+				// styleSelected.Render() call below — nesting highlighted
+				// (real-ANSI) text inside that would clobber its background
+				// for everything after the highlight, so no query here.
+				line = styleSelected.Width(rowW).Render(formatTxRow(t, rowW, ""))
+			} else {
+				line = formatTxRow(t, rowW, m.searchQ)
 			}
 			b.WriteString("  " + line + "\n")
 		}
@@ -1595,7 +1609,13 @@ func runImportCmd(path, account string, useAI bool) tea.Cmd {
 	}
 }
 
-func loadCmd(month, query, account string) tea.Cmd {
+// loadCmd fetches transactions for month/account, unfiltered by search text
+// — search is applied client-side (filterTxs) over the result, live as the
+// user types, rather than round-tripping to SQLite on every keystroke or
+// baking a LIKE clause into the query. Store.Filter.Query / the SQL LIKE
+// path still exists and is still used by the CLI (`budgetctl list --query`),
+// just not from here anymore.
+func loadCmd(month, account string) tea.Cmd {
 	return func() tea.Msg {
 		s, err := store.New(config.DBPath())
 		if err != nil {
@@ -1604,7 +1624,7 @@ func loadCmd(month, query, account string) tea.Cmd {
 		defer s.Close()
 		ctx := context.Background()
 
-		txs, err := s.List(ctx, store.Filter{Month: month, Query: query, Account: account, Limit: 500})
+		txs, err := s.List(ctx, store.Filter{Month: month, Account: account, Limit: 500})
 		if err != nil {
 			return errMsg{err}
 		}
@@ -1634,7 +1654,7 @@ func (m *Model) setStatus(s string) {
 // payeeColW is the fixed display width of the Payee column in formatTxRow.
 const payeeColW = 20
 
-func formatTxRow(t *models.Transaction, width int) string {
+func formatTxRow(t *models.Transaction, width int, query string) string {
 	amtStr := fmt.Sprintf("%+8.2f€", t.Amount)
 	amtStyled := ""
 	if t.Amount >= 0 {
@@ -1655,11 +1675,17 @@ func formatTxRow(t *models.Transaction, width int) string {
 	dateStr := t.Date.Format("2006-01-02")
 	dateStyled := coloredDate(dateStr, t.Date)
 
+	// Truncate the PLAIN string first, then highlight the truncated
+	// result, then pad via an ANSI-aware lipgloss.Width() wrap — padRunes
+	// counts runes naively and would miscount escape-code bytes as
+	// "runes" if applied to already-highlighted (ANSI-embedded) text.
 	payee := t.Payee
 	if payee == "" {
 		payee = "—"
 	}
-	payeeStyled := stylePayee.Render(padRunes(truncRunes(payee, payeeColW), payeeColW))
+	payeeMatchIdx := fuzzyMatchIndexes(query, t.Payee)
+	payeeStyled := lipgloss.NewStyle().Width(payeeColW).
+		Render(highlightMatches(truncRunes(payee, payeeColW), payeeMatchIdx, stylePayee))
 
 	// purpose (Description) fills whatever's left — truncated by RUNE, not
 	// byte: German bank text is full of multi-byte umlauts (ä/ö/ü/ß), and
@@ -1668,7 +1694,8 @@ func formatTxRow(t *models.Transaction, width int) string {
 	if purposeW < 10 {
 		purposeW = 10
 	}
-	purpose := truncRunes(t.Description, purposeW)
+	descMatchIdx := fuzzyMatchIndexes(query, t.Description)
+	purpose := highlightMatches(truncRunes(t.Description, purposeW), descMatchIdx, lipgloss.NewStyle())
 
 	return fmt.Sprintf("%s  %s  %s  %s  %s",
 		dateStyled,
@@ -1681,6 +1708,84 @@ func formatTxRow(t *models.Transaction, width int) string {
 
 // truncRunes truncates s to at most n runes, appending "…" if it had to cut
 // (the ellipsis itself counts toward n). Rune-safe, unlike raw byte slicing.
+// filterTxs fuzzy-matches q against each transaction's payee OR
+// description (github.com/sahilm/fuzzy), keeping a transaction if either
+// matches. Unlike habctl's filterHabits, this does NOT re-rank by match
+// quality — transactions are naturally date-ordered, and re-sorting by
+// fuzzy score would scramble that chronological order (same reasoning as
+// taskctl/calctl's list/day grouping preservation).
+func filterTxs(txs []models.Transaction, q string) []models.Transaction {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return txs
+	}
+	payees := make([]string, len(txs))
+	descs := make([]string, len(txs))
+	for i, t := range txs {
+		payees[i] = t.Payee
+		descs[i] = t.Description
+	}
+	matched := make(map[int]bool, len(txs))
+	for _, mt := range fuzzy.Find(q, payees) {
+		matched[mt.Index] = true
+	}
+	for _, mt := range fuzzy.Find(q, descs) {
+		matched[mt.Index] = true
+	}
+	out := make([]models.Transaction, 0, len(matched))
+	for i, t := range txs {
+		if matched[i] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// fuzzyMatchIndexes returns the rune indexes within s that q fuzzy-matched,
+// or nil if q is empty or doesn't match at all.
+func fuzzyMatchIndexes(q, s string) []int {
+	if q == "" {
+		return nil
+	}
+	matches := fuzzy.Find(q, []string{s})
+	if len(matches) == 0 {
+		return nil
+	}
+	return matches[0].MatchedIndexes
+}
+
+// highlightMatches renders s with the rune positions in idxs (from
+// fuzzyMatchIndexes) styled via a warm, underlined variant of base, and
+// every other character via base itself — fzf-style match highlighting.
+//
+// Renders one character at a time rather than nesting a highlighted span
+// inside a single outer Render() call: lipgloss's Render() ends every
+// string with a full SGR reset, so an inner Render() call's reset would
+// wipe out the outer style for everything after the first highlighted
+// character. Per-character rendering keeps every segment self-contained.
+//
+// idxs are indexes into s BEFORE any truncation — callers must resolve
+// indexes against the same, untruncated string used to compute them.
+func highlightMatches(s string, idxs []int, base lipgloss.Style) string {
+	if len(idxs) == 0 {
+		return base.Render(s)
+	}
+	hi := base.Foreground(colorAmber).Underline(true)
+	matchSet := make(map[int]bool, len(idxs))
+	for _, i := range idxs {
+		matchSet[i] = true
+	}
+	var b strings.Builder
+	for i, r := range []rune(s) {
+		if matchSet[i] {
+			b.WriteString(hi.Render(string(r)))
+		} else {
+			b.WriteString(base.Render(string(r)))
+		}
+	}
+	return b.String()
+}
+
 func truncRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
