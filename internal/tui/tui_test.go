@@ -268,6 +268,65 @@ func TestTabHitTest_MissOutsideAnyTabDoesNothing(t *testing.T) {
 	}
 }
 
+func manyMonths() []string {
+	return []string{
+		"2026-06", "2026-05", "2026-04", "2026-03", "2026-02", "2026-01",
+		"2025-12", "2025-11", "2025-10", "2025-09", "2025-08", "2025-07",
+		"2025-06", "2025-05", "2025-04", "2025-03", "2025-02", "2025-01",
+	}
+}
+
+func TestMonthTabWindow_KeepsActiveTabVisibleWithManyMonths(t *testing.T) {
+	// Regression test: with 18 months (a year+ of imports), rendering
+	// every tab unconditionally overflowed the terminal width with no way
+	// to reach the ones that didn't fit — reported directly against real
+	// user data (18 months, Jan 2025 through Jun 2026).
+	months := manyMonths()
+	for _, activeTab := range []int{0, 5, 10, 17} {
+		m := Model{width: 100, height: 20, months: months, activeTab: activeTab}
+		visible, start := m.monthTabWindow(m.width)
+		if activeTab < start || activeTab >= start+len(visible) {
+			t.Errorf("activeTab %d not within visible window [%d, %d)", activeTab, start, start+len(visible))
+		}
+	}
+}
+
+func TestMonthTabWindow_RenderedBarNeverExceedsWidth(t *testing.T) {
+	months := manyMonths()
+	for _, width := range []int{60, 80, 100, 140} {
+		for _, activeTab := range []int{0, 8, 17} {
+			m := Model{width: width, height: 20, months: months, activeTab: activeTab}
+			line := strings.TrimRight(m.renderMonthTabBar(width), "\n")
+			if w := lipgloss.Width(line); w > width {
+				t.Errorf("width=%d activeTab=%d: rendered tab bar is %d cols, exceeds terminal width", width, activeTab, w)
+			}
+		}
+	}
+}
+
+func TestMonthTabWindow_NoWindowingWhenEverythingFits(t *testing.T) {
+	months := []string{"2026-07", "2026-06", "2026-05"}
+	m := Model{width: 200, height: 20, months: months, activeTab: 0}
+	visible, start := m.monthTabWindow(m.width)
+	if start != 0 || len(visible) != len(months) {
+		t.Errorf("expected no windowing when all months fit, got start=%d visible=%v", start, visible)
+	}
+}
+
+func TestTabHitTest_MapsCorrectlyWithinAScrolledWindow(t *testing.T) {
+	months := manyMonths()
+	m := Model{width: 100, height: 20, months: months, activeTab: 10}
+	visible, start := m.monthTabWindow(m.width)
+	if start == 0 {
+		t.Fatal("test setup expected the window to be scrolled (start > 0)")
+	}
+	col := lipgloss.Width(styleMuted.Render("‹ ")) + lipgloss.Width(styleTabInact.Render(visible[0]))
+	got := m.tabHitTest(col+1, 2)
+	if want := start + 1; got != want {
+		t.Errorf("expected click to map to global month index %d, got %d", want, got)
+	}
+}
+
 func TestRowHitTest_ClickMovesCursorToThatTransaction(t *testing.T) {
 	m := Model{
 		width: 100, height: 20,

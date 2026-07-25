@@ -1134,21 +1134,113 @@ func (m Model) listStartRow() int {
 	return row
 }
 
+// monthTabWindow returns the slice of m.months (and its start index into
+// the full slice) that fits within width and should be visible in the tab
+// bar right now. With enough months (18+ after importing more than a
+// year), rendering every tab unconditionally overflows the terminal width
+// with no way to reach the tabs that don't fit — this windows them the
+// same way the vertical transaction list already windows rows around
+// m.cursor: scrolled just enough to keep activeTab in view, not recentered
+// on every change. Shared by renderList/renderSummaryView (rendering) and
+// tabHitTest (hit-testing) so a click always lands on the tab it visually
+// appears to be over.
+func (m Model) monthTabWindow(width int) (visible []string, start int) {
+	if len(m.months) == 0 {
+		return nil, 0
+	}
+	// First pass at full width: if everything fits, no window (and so no
+	// scroll indicators) needed at all.
+	if monthTabFitCount(m.months, width) >= len(m.months) {
+		return m.months, 0
+	}
+	// Windowing is needed, which means at least one scroll indicator will
+	// render — reserve room for both up front so the rendered line never
+	// exceeds width. Conservative (may fit one fewer tab than technically
+	// possible on whichever side ends up with no indicator), but simple
+	// and always correct.
+	indicatorW := lipgloss.Width(styleMuted.Render("‹ ")) + lipgloss.Width(styleMuted.Render(" ›"))
+	count := monthTabFitCount(m.months, width-indicatorW)
+	if count < 1 {
+		count = 1
+	}
+	start = 0
+	if m.activeTab >= count {
+		start = m.activeTab - count + 1
+	}
+	if start > len(m.months)-count {
+		start = len(m.months) - count
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + count
+	return m.months[start:end], start
+}
+
+// monthTabFitCount returns how many leading months fit within width when
+// rendered as tabs (all inactive-width, since active/inactive share the
+// same Padding(0,2) sizing).
+func monthTabFitCount(months []string, width int) int {
+	count := 0
+	usedW := 0
+	for _, mo := range months {
+		w := lipgloss.Width(styleTabInact.Render(mo))
+		if count > 0 && usedW+w > width {
+			break
+		}
+		usedW += w
+		count++
+	}
+	return count
+}
+
+// renderMonthTabBar renders the (possibly windowed) month tab row, with a
+// "…" indicator on whichever side has months scrolled out of view.
+func (m Model) renderMonthTabBar(width int) string {
+	visible, start := m.monthTabWindow(width)
+	if len(visible) == 0 {
+		return "\n"
+	}
+	var parts []string
+	if start > 0 {
+		parts = append(parts, styleMuted.Render("‹ "))
+	}
+	for i, mo := range visible {
+		globalIdx := start + i
+		if globalIdx == m.activeTab {
+			parts = append(parts, styleTabActive.Render(mo))
+		} else {
+			parts = append(parts, styleTabInact.Render(mo))
+		}
+	}
+	if start+len(visible) < len(m.months) {
+		parts = append(parts, styleMuted.Render(" ›"))
+	}
+	return strings.Join(parts, "") + "\n"
+}
+
 // tabHitTest returns the month index at column x on the tab row, or -1 if
-// the click didn't land on a tab.
+// the click didn't land on a tab. Mirrors renderMonthTabBar's windowing
+// exactly, including the "‹"/"›" scroll indicators, so clicking the
+// leftmost/rightmost visible tab always maps to the right month.
 func (m Model) tabHitTest(x, y int) int {
 	const tabRow = 2 // header title(0) + rule(1) + tabs(2)
 	if y != tabRow || len(m.months) == 0 {
 		return -1
 	}
+	visible, start := m.monthTabWindow(m.width)
 	col := 0
-	for i, mo := range m.months {
+	if start > 0 {
+		col += lipgloss.Width(styleMuted.Render("‹ "))
+	}
+	for i, mo := range visible {
+		globalIdx := start + i
 		w := lipgloss.Width(styleTabInact.Render(mo))
-		if i == m.activeTab {
+		if globalIdx == m.activeTab {
 			w = lipgloss.Width(styleTabActive.Render(mo))
 		}
 		if x >= col && x < col+w {
-			return i
+			return globalIdx
 		}
 		col += w
 	}
@@ -1211,21 +1303,8 @@ func (m Model) renderList() string {
 
 	b.WriteString(m.renderHeader("Transactions"))
 
-	// ── month tab bar ──
-	var parts []string
-	for i, mo := range m.months {
-		label := mo
-		if i == m.activeTab {
-			parts = append(parts, styleTabActive.Render(label))
-		} else {
-			parts = append(parts, styleTabInact.Render(label))
-		}
-	}
-	if len(parts) > 0 {
-		b.WriteString(strings.Join(parts, "") + "\n")
-	} else {
-		b.WriteString("\n")
-	}
+	// ── month tab bar (windowed — see renderMonthTabBar) ──
+	b.WriteString(m.renderMonthTabBar(w))
 
 	// ── account tab bar (only worth showing once there's more than one) ──
 	if len(m.accounts) > 0 {
@@ -1424,18 +1503,8 @@ func (m Model) renderSummaryView() string {
 
 	b.WriteString(m.renderHeader("Summary"))
 
-	// month tabs
-	var parts []string
-	for i, mo := range m.months {
-		if i == m.activeTab {
-			parts = append(parts, styleTabActive.Render(mo))
-		} else {
-			parts = append(parts, styleTabInact.Render(mo))
-		}
-	}
-	if len(parts) > 0 {
-		b.WriteString(strings.Join(parts, "") + "\n")
-	}
+	// month tabs (windowed — see renderMonthTabBar)
+	b.WriteString(m.renderMonthTabBar(m.width))
 
 	if len(m.accounts) > 0 {
 		var aparts []string
