@@ -152,7 +152,7 @@ func TestEditFlow(t *testing.T) {
 	_ = s.Close()
 
 	// load list
-	m = feed(t, m, loadCmd("", ""))
+	m = feed(t, m, loadCmd("", "", ""))
 	if len(m.txs) != 0 {
 		t.Fatalf("expected empty list, got %d", len(m.txs))
 	}
@@ -168,7 +168,7 @@ func TestDeleteConfirmCancel(t *testing.T) {
 	m, _ = typeKeys(t, m, "Temp", "enter")
 	m, cmd := typeKeys(t, m, "-1", "enter", "enter")
 	m = feed(t, m, cmd)
-	m = feed(t, m, loadCmd("", ""))
+	m = feed(t, m, loadCmd("", "", ""))
 	if len(m.txs) != 1 {
 		t.Fatalf("setup failed: %d txs", len(m.txs))
 	}
@@ -190,7 +190,7 @@ func TestDeleteConfirmCancel(t *testing.T) {
 		t.Fatal("y must trigger delete command")
 	}
 	m = feed(t, m, cmd)
-	m = feed(t, m, loadCmd("", ""))
+	m = feed(t, m, loadCmd("", "", ""))
 	if len(m.txs) != 0 {
 		t.Fatalf("entry not deleted: %+v", m.txs)
 	}
@@ -324,6 +324,61 @@ func TestTabHitTest_MapsCorrectlyWithinAScrolledWindow(t *testing.T) {
 	got := m.tabHitTest(col+1, 2)
 	if want := start + 1; got != want {
 		t.Errorf("expected click to map to global month index %d, got %d", want, got)
+	}
+}
+
+func TestAdjacentYearTab_ForwardLandsOnEarliestMonthOfNextYear(t *testing.T) {
+	months := manyMonths()                    // 2026-06 .. 2026-01, 2025-12 .. 2025-01 (newest-first)
+	got, ok := adjacentYearTab(months, 17, 1) // start at 2025-01 (oldest)
+	if !ok || months[got] != "2026-01" {
+		t.Errorf("expected forward jump from 2025-01 to land on 2026-01, got index %d (ok=%v)", got, ok)
+	}
+}
+
+func TestAdjacentYearTab_BackwardLandsOnLatestMonthOfPreviousYear(t *testing.T) {
+	months := manyMonths()
+	got, ok := adjacentYearTab(months, 0, -1) // start at 2026-06 (newest)
+	if !ok || months[got] != "2025-12" {
+		t.Errorf("expected backward jump from 2026-06 to land on 2025-12, got index %d (ok=%v)", got, ok)
+	}
+}
+
+func TestAdjacentYearTab_NoBoundaryToCrossReturnsFalse(t *testing.T) {
+	months := []string{"2026-03", "2026-02", "2026-01"} // all one year
+	if _, ok := adjacentYearTab(months, 0, 1); ok {
+		t.Error("expected no forward year boundary within a single year")
+	}
+	if _, ok := adjacentYearTab(months, 2, -1); ok {
+		t.Error("expected no backward year boundary within a single year")
+	}
+}
+
+func TestAdjacentYearTab_EmptyMonthsReturnsFalse(t *testing.T) {
+	if _, ok := adjacentYearTab(nil, 0, 1); ok {
+		t.Error("expected no year jump possible with no months at all")
+	}
+}
+
+func TestYearJumpKeys_UpdateActiveTabAndReload(t *testing.T) {
+	months := manyMonths()
+	m := Model{width: 100, height: 20, months: months, activeTab: 17}
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = mi.(Model)
+	if m.months[m.activeTab] != "2026-01" {
+		t.Errorf("expected 'y' to jump to 2026-01, activeTab now points to %q", m.months[m.activeTab])
+	}
+	if cmd == nil {
+		t.Error("expected 'y' to trigger a reload command")
+	}
+
+	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Y")})
+	m = mi.(Model)
+	if m.months[m.activeTab] != "2025-12" {
+		t.Errorf("expected 'Y' to jump back to 2025-12, activeTab now points to %q", m.months[m.activeTab])
+	}
+	if cmd == nil {
+		t.Error("expected 'Y' to trigger a reload command")
 	}
 }
 
@@ -973,5 +1028,147 @@ func TestSearchMode_EnterClosesInputWithoutReloadingFromDB(t *testing.T) {
 	}
 	if len(m.txs) != 1 {
 		t.Errorf("expected the filtered result to persist after closing the input, got %+v", m.txs)
+	}
+}
+
+func TestCategoryPickItems_AllCategoriesAlwaysFirstAndNeverFilteredAway(t *testing.T) {
+	cats := []string{"dining", "groceries", "streaming"}
+	items := categoryPickItems(cats, "xyz-does-not-match-anything")
+	if len(items) != 1 || items[0] != "All categories" {
+		t.Errorf("expected 'All categories' to remain even when the query matches nothing, got %+v", items)
+	}
+}
+
+func TestCategoryPickItems_FuzzyFiltersAndRanks(t *testing.T) {
+	cats := []string{"dining", "groceries", "streaming"}
+	items := categoryPickItems(cats, "gro")
+	if len(items) != 2 || items[0] != "All categories" || items[1] != "groceries" {
+		t.Errorf("expected ['All categories' 'groceries'], got %+v", items)
+	}
+}
+
+func TestCategoryPickItems_EmptyQueryReturnsEverything(t *testing.T) {
+	cats := []string{"dining", "groceries"}
+	items := categoryPickItems(cats, "")
+	if len(items) != 3 {
+		t.Errorf("expected 'All categories' + 2 categories, got %+v", items)
+	}
+}
+
+func TestOpenCategoryPick_FKeyOpensPopup(t *testing.T) {
+	m := Model{width: 100, height: 30}
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	m = mi.(Model)
+	if m.view != viewCategoryPick {
+		t.Fatalf("expected 'f' to open viewCategoryPick, got %v", m.view)
+	}
+	if cmd == nil {
+		t.Error("expected a command to focus the filter input")
+	}
+}
+
+func TestCategoryPick_SelectingACategoryAppliesFilterAndReloads(t *testing.T) {
+	m := Model{width: 100, height: 30, categories: []string{"dining", "groceries"}}
+	m = m.openCategoryPick()
+
+	// cursor 0 = "All categories", 1 = "dining" (alphabetical, no query typed)
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = mi.(Model)
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+
+	if m.view != viewList {
+		t.Errorf("expected enter to close the popup back to viewList, got %v", m.view)
+	}
+	if m.categoryFilter != "dining" {
+		t.Errorf("expected categoryFilter to be set to 'dining', got %q", m.categoryFilter)
+	}
+	if cmd == nil {
+		t.Error("expected a reload command after applying the filter")
+	}
+}
+
+func TestCategoryPick_SelectingAllCategoriesClearsFilter(t *testing.T) {
+	m := Model{width: 100, height: 30, categories: []string{"dining"}, categoryFilter: "dining"}
+	m = m.openCategoryPick()
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // cursor already at "All categories"
+	m = mi.(Model)
+	if m.categoryFilter != "" {
+		t.Errorf("expected 'All categories' to clear the filter, got %q", m.categoryFilter)
+	}
+}
+
+func TestCategoryPick_EscCancelsWithoutApplyingAnyChange(t *testing.T) {
+	m := Model{width: 100, height: 30, categories: []string{"dining", "groceries"}, categoryFilter: "dining"}
+	m = m.openCategoryPick()
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown}) // move toward "groceries"
+	m = mi.(Model)
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(Model)
+
+	if m.view != viewList {
+		t.Errorf("expected esc to close the popup, got %v", m.view)
+	}
+	if m.categoryFilter != "dining" {
+		t.Errorf("expected esc to leave the existing filter untouched, got %q", m.categoryFilter)
+	}
+}
+
+func TestCategoryPick_TypingClampsCursorToNarrowedList(t *testing.T) {
+	m := Model{width: 100, height: 30, categories: []string{"dining", "groceries", "streaming"}}
+	m = m.openCategoryPick()
+	m.categoryPickInput.Focus()
+
+	// move cursor to the last item (streaming, index 3: All+dining+groceries+streaming)
+	for range 3 {
+		mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = mi.(Model)
+	}
+	if m.categoryPickCursor != 3 {
+		t.Fatalf("test setup: expected cursor at 3, got %d", m.categoryPickCursor)
+	}
+
+	// typing a query that narrows to just "All categories" + "dining" must
+	// pull the cursor back in bounds, not leave it pointing past the end
+	for _, r := range "din" {
+		mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = mi.(Model)
+	}
+	items := categoryPickItems(m.categories, m.categoryPickInput.Value())
+	if m.categoryPickCursor >= len(items) {
+		t.Errorf("expected cursor to be clamped within the narrowed list (len=%d), got cursor=%d", len(items), m.categoryPickCursor)
+	}
+}
+
+func TestCategoryFilter_EscClearsAppliedFilterWhenNoSearchActive(t *testing.T) {
+	m := Model{width: 100, height: 30, categoryFilter: "dining", allTxs: []models.Transaction{{Category: "dining"}}}
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(Model)
+	if m.categoryFilter != "" {
+		t.Errorf("expected esc to clear the category filter, got %q", m.categoryFilter)
+	}
+	if cmd == nil {
+		t.Error("expected clearing the category filter to trigger a reload")
+	}
+}
+
+func TestCategoryFilter_EscClearsSearchBeforeCategoryFilter(t *testing.T) {
+	// esc priority: an active search takes precedence over clearing the
+	// category filter — matches the existing search/account esc chain.
+	m := Model{
+		width: 100, height: 30,
+		searchQ: "bgt", categoryFilter: "dining",
+		allTxs: []models.Transaction{{Category: "dining", Payee: "budgetctl"}},
+	}
+	m.txs = filterTxs(m.allTxs, m.searchQ)
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(Model)
+	if m.searchQ != "" {
+		t.Errorf("expected esc to clear the search query first, got %q", m.searchQ)
+	}
+	if m.categoryFilter != "dining" {
+		t.Errorf("expected the category filter to survive the first esc (search took priority), got %q", m.categoryFilter)
 	}
 }

@@ -258,6 +258,26 @@ func (s *Store) ListAccounts(ctx context.Context) ([]string, error) {
 	return accts, rows.Err()
 }
 
+// ListCategories returns every distinct non-empty category currently in
+// use, alphabetically — for populating a category filter picker.
+func (s *Store) ListCategories(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT category FROM transactions WHERE category != '' ORDER BY category`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cats []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		cats = append(cats, c)
+	}
+	return cats, rows.Err()
+}
+
 // SetCategory updates the category for a single transaction.
 // Update rewrites date, description, amount, and category of an existing transaction.
 func (s *Store) Update(ctx context.Context, t *models.Transaction) error {

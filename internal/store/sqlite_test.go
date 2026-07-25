@@ -312,6 +312,31 @@ func TestListAccounts(t *testing.T) {
 	}
 }
 
+func TestListCategories(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	a := tx("a1", -1)
+	a.Category = "groceries"
+	b := tx("b1", -1)
+	b.Category = "dining"
+	c := tx("c1", -1)
+	c.Category = "" // uncategorized — must not show up as a phantom "" entry
+	for _, t2 := range []*models.Transaction{a, b, c} {
+		if err := s.Upsert(ctx, t2); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cats, err := s.ListCategories(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cats) != 2 || cats[0] != "dining" || cats[1] != "groceries" {
+		t.Errorf("expected [dining groceries] (alphabetical, empty excluded), got %+v", cats)
+	}
+}
+
 func TestMonthlyTrend(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

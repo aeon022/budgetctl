@@ -29,12 +29,13 @@ import (
 type view int
 
 const (
-	viewList    view = iota
-	viewSummary view = iota
-	viewHelp    view = iota
-	viewForm    view = iota
-	viewImport  view = iota
-	viewDetail  view = iota
+	viewList         view = iota
+	viewSummary      view = iota
+	viewHelp         view = iota
+	viewForm         view = iota
+	viewImport       view = iota
+	viewDetail       view = iota
+	viewCategoryPick view = iota
 )
 
 // ── Import assistant steps ──────────────────────────────────────────────────
@@ -105,12 +106,13 @@ var (
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 type txLoadedMsg struct {
-	txs      []models.Transaction
-	months   []string
-	accounts []string
-	sum      *models.Summary
-	goals    []models.GoalStatus
-	trend    []models.MonthlyPoint
+	txs        []models.Transaction
+	months     []string
+	accounts   []string
+	categories []string
+	sum        *models.Summary
+	goals      []models.GoalStatus
+	trend      []models.MonthlyPoint
 }
 type errMsg struct{ err error }
 type txSavedMsg struct{ err error }
@@ -144,8 +146,13 @@ type Model struct {
 	searchQ       string
 	searching     bool
 	searchInput   textinput.Model
-	filterCat     string
 	vp            viewport.Model
+
+	// category filter ("f" opens a popup picker, viewCategoryPick)
+	categories         []string // distinct categories in use, alphabetical
+	categoryFilter     string   // active filter; "" = all categories
+	categoryPickInput  textinput.Model
+	categoryPickCursor int
 
 	// add/edit form
 	form    [fCount]textinput.Model
@@ -224,7 +231,7 @@ func Run() error {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadCmd("", ""), tea.WindowSize())
+	return tea.Batch(loadCmd("", "", ""), tea.WindowSize())
 }
 
 func (m Model) activeMonth() string {
@@ -241,6 +248,44 @@ func (m Model) activeAccountName() string {
 		return ""
 	}
 	return m.accounts[m.activeAccount]
+}
+
+// adjacentYearTab returns the index of the nearest month in months whose
+// calendar year differs from the month at activeTab, scanning toward newer
+// months (dir > 0) or older months (dir < 0) — months is assumed sorted
+// newest-first, as ListMonths returns it. Returns (-1, false) if there's no
+// year boundary left to cross in that direction (already at the oldest/
+// newest year present, or months is empty).
+//
+// Landing point matches the direction crossed: scanning toward newer months
+// (dir > 0) stops on the FIRST month of the next year (the earliest month
+// you have data for that year); scanning toward older months (dir < 0)
+// stops on the LAST month of the previous year (the most recent one) —
+// both are simply "the first month encountered whose year differs",
+// which naturally falls out of scanning in the respective direction over
+// a newest-first-sorted slice.
+func adjacentYearTab(months []string, activeTab, dir int) (int, bool) {
+	if len(months) == 0 {
+		return -1, false
+	}
+	curYear := ""
+	if activeTab >= 0 && activeTab < len(months) {
+		curYear = months[activeTab][:4]
+	}
+	if dir > 0 {
+		for i := activeTab - 1; i >= 0; i-- {
+			if months[i][:4] != curYear {
+				return i, true
+			}
+		}
+	} else {
+		for i := activeTab + 1; i < len(months); i++ {
+			if months[i][:4] != curYear {
+				return i, true
+			}
+		}
+	}
+	return -1, false
 }
 
 // cycleAccount steps an activeAccount index by dir (+1/-1) across the range
@@ -271,6 +316,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.months = msg.months
 		}
 		m.accounts = msg.accounts
+		m.categories = msg.categories
 		if m.activeAccount >= len(m.accounts) {
 			m.activeAccount = -1
 		}
@@ -291,7 +337,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = viewList
 			m.editTx = nil
 			m.setStatus("saved")
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 
 	case txDeletedMsg:
@@ -299,7 +345,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		} else {
 			m.setStatus("deleted")
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 
 	case importParsedMsg:
@@ -345,7 +391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i != m.activeTab {
 					m.activeTab = i
 					m.cursor = 0
-					return m, loadCmd(m.activeMonth(), m.activeAccountName())
+					return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 				}
 				return m, nil
 			}
@@ -353,7 +399,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i != m.activeAccount {
 					m.activeAccount = i
 					m.cursor = 0
-					return m, loadCmd(m.activeMonth(), m.activeAccountName())
+					return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 				}
 				return m, nil
 			}
@@ -407,6 +453,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailTx = nil
 			}
 			return m, nil
+		case viewCategoryPick:
+			return m.updateCategoryPick(msg)
 		}
 	}
 
@@ -427,6 +475,128 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // openImport opens the CSV import assistant, rooted at ~/Downloads (falling
 // back to the home directory) since that's where bank exports usually land.
+// openCategoryPick opens the "f" category-filter popup, pre-focused for
+// typing straight away.
+func (m Model) openCategoryPick() Model {
+	ci := textinput.New()
+	ci.Placeholder = "type to filter…"
+	ci.CharLimit = 60
+	m.categoryPickInput = ci
+	m.categoryPickCursor = 0
+	m.view = viewCategoryPick
+	return m
+}
+
+// categoryPickItems returns the picker's list for the current query:
+// "All categories" always first — a reset action, not a search target, so
+// it's never fuzzy-filtered away — followed by categories matching query,
+// ranked best-match-first (github.com/sahilm/fuzzy). Unlike filterTxs (the
+// transaction list itself), re-ranking by match quality here is correct:
+// this is a one-shot fzf-style picker, not a persistent chronologically-
+// ordered list where re-sorting would be disorienting.
+func categoryPickItems(categories []string, query string) []string {
+	items := []string{"All categories"}
+	if query == "" {
+		return append(items, categories...)
+	}
+	for _, mt := range fuzzy.Find(query, categories) {
+		items = append(items, categories[mt.Index])
+	}
+	return items
+}
+
+func (m Model) updateCategoryPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	items := categoryPickItems(m.categories, m.categoryPickInput.Value())
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.view = viewList
+		return m, nil
+	case "enter":
+		m.view = viewList
+		if m.categoryPickCursor < 0 || m.categoryPickCursor >= len(items) {
+			return m, nil
+		}
+		selected := items[m.categoryPickCursor]
+		if selected == "All categories" {
+			m.categoryFilter = ""
+		} else {
+			m.categoryFilter = selected
+		}
+		m.cursor = 0
+		return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+	case "up", "ctrl+p":
+		if m.categoryPickCursor > 0 {
+			m.categoryPickCursor--
+		}
+		return m, nil
+	case "down", "ctrl+n":
+		if m.categoryPickCursor < len(items)-1 {
+			m.categoryPickCursor++
+		}
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.categoryPickInput, cmd = m.categoryPickInput.Update(msg)
+		// Clamp the cursor to the newly (possibly shorter) filtered list —
+		// typing a character that narrows the results out from under the
+		// current cursor position must not leave it pointing past the end.
+		newItems := categoryPickItems(m.categories, m.categoryPickInput.Value())
+		if m.categoryPickCursor >= len(newItems) {
+			m.categoryPickCursor = max(0, len(newItems)-1)
+		}
+		return m, cmd
+	}
+}
+
+// renderCategoryPickPopup renders the "f" category-filter picker: a text
+// input for fuzzy search, a scrollable-by-typing list of matching
+// categories, and the fixed "All categories" reset option.
+func (m Model) renderCategoryPickPopup() string {
+	w := m.importPopupWidth() // reuse the import popup's fixed width budget
+	contentW := w - 6         // border(2) + padding(4)
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Filter by Category") + "\n\n")
+	b.WriteString("  " + m.categoryPickInput.View() + "\n\n")
+
+	query := m.categoryPickInput.Value()
+	items := categoryPickItems(m.categories, query)
+	const maxRows = 12 // cap so the popup doesn't grow unbounded with many categories
+	for i, item := range items {
+		if i >= maxRows {
+			b.WriteString(styleMuted.Render(fmt.Sprintf("  … and %d more (keep typing to narrow)", len(items)-maxRows)) + "\n")
+			break
+		}
+		itemW := contentW - 2
+		if i == m.categoryPickCursor {
+			// Selected row: plain padded text in one Render() call, no
+			// nested highlight — same reasoning as the cursor row in the
+			// main transaction list (nesting per-character ANSI inside
+			// this wrap would clobber it).
+			b.WriteString("> " + styleSelected.Render(padRunes(truncRunes(item, itemW), itemW)) + "\n")
+			continue
+		}
+		label := item
+		if item != "All categories" {
+			label = highlightMatches(truncRunes(item, itemW), fuzzyMatchIndexes(query, item), lipgloss.NewStyle())
+		}
+		b.WriteString("  " + label + "\n")
+	}
+	if len(items) == 1 {
+		b.WriteString("\n" + styleMuted.Render("  (no categorized transactions yet)") + "\n")
+	}
+	b.WriteString("\n" + styleMuted.Render("↑/↓ navigate  ·  enter: apply  ·  esc: cancel"))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Width(w).
+		Render(b.String())
+}
+
 func (m Model) openImport() Model {
 	fp := filepicker.New()
 	fp.AllowedTypes = []string{".csv"}
@@ -534,7 +704,7 @@ func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case importDone:
 		m.view = viewList
 		m.importStep = importPickFile
-		return m, loadCmd(m.activeMonth(), m.activeAccountName())
+		return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 	}
 	return m, nil
 }
@@ -606,25 +776,37 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	case "shift+tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab - 1 + len(m.months)) % len(m.months)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		}
+	case "y":
+		if i, ok := adjacentYearTab(m.months, m.activeTab, 1); ok {
+			m.activeTab = i
+			m.cursor = 0
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		}
+	case "Y":
+		if i, ok := adjacentYearTab(m.months, m.activeTab, -1); ok {
+			m.activeTab = i
+			m.cursor = 0
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	case "]":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), 1)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	case "[":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), -1)
 			m.cursor = 0
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	case "j", "down":
 		if m.cursor < len(m.txs)-1 {
@@ -663,6 +845,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		m = m.openImport()
 		return m, m.fp.Init()
+	case "f":
+		m = m.openCategoryPick()
+		return m, m.categoryPickInput.Focus()
 	case "enter":
 		if len(m.txs) > 0 {
 			t := m.txs[m.cursor]
@@ -691,10 +876,15 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.catInput.Focus()
 		}
 	case "esc":
-		if m.searchQ != "" {
+		switch {
+		case m.searchQ != "":
 			m.searchQ = ""
 			m.cursor = 0
 			m.txs = filterTxs(m.allTxs, "")
+		case m.categoryFilter != "":
+			m.categoryFilter = ""
+			m.cursor = 0
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), "")
 		}
 	}
 	return m, nil
@@ -708,22 +898,32 @@ func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	case "shift+tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab - 1 + len(m.months)) % len(m.months)
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		}
+	case "y":
+		if i, ok := adjacentYearTab(m.months, m.activeTab, 1); ok {
+			m.activeTab = i
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		}
+	case "Y":
+		if i, ok := adjacentYearTab(m.months, m.activeTab, -1); ok {
+			m.activeTab = i
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	case "]":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), 1)
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	case "[":
 		if len(m.accounts) > 0 {
 			m.activeAccount = cycleAccount(m.activeAccount, len(m.accounts), -1)
-			return m, loadCmd(m.activeMonth(), m.activeAccountName())
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 	}
 	var cmd tea.Cmd
@@ -863,6 +1063,8 @@ func (m Model) View() string {
 		return overlay.Center(m.renderList(), m.renderImportPopup(), m.width, m.height, 0)
 	case viewDetail:
 		return overlay.Center(m.renderList(), m.renderDetailPopup(), m.width, m.height, 0)
+	case viewCategoryPick:
+		return overlay.Center(m.renderList(), m.renderCategoryPickPopup(), m.width, m.height, 0)
 	default:
 		return m.renderList()
 	}
@@ -1128,6 +1330,9 @@ func (m Model) listStartRow() int {
 	if m.searchQ != "" {
 		row++
 	}
+	if m.categoryFilter != "" {
+		row++
+	}
 	if m.categorizing {
 		row++
 	}
@@ -1328,6 +1533,9 @@ func (m Model) renderList() string {
 	if m.searchQ != "" {
 		b.WriteString(styleMuted.Render("  /"+m.searchQ) + "\n")
 	}
+	if m.categoryFilter != "" {
+		b.WriteString(styleMuted.Render("  filter: ") + styleCategory.Render(m.categoryFilter) + styleMuted.Render("  (esc to clear)") + "\n")
+	}
 	if m.categorizing {
 		b.WriteString("  " + styleCategory.Render("category: ") + m.catInput.View() + "\n")
 	}
@@ -1385,7 +1593,7 @@ func (m Model) renderList() string {
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
 	} else {
-		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  tab:month  ]:account  ?:help  q:quit")
+		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  f:filter  tab:month  y:year  ]:account  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -1434,6 +1642,7 @@ func (m Model) helpContent() string {
 	b.WriteString(row("pgdn/pgup", "page down / up"))
 	b.WriteString(row("tab", "next month"))
 	b.WriteString(row("shift+tab", "previous month"))
+	b.WriteString(row("y / Y", "jump to next / previous year (skips to where data exists)"))
 	b.WriteString(section("Entries"))
 	b.WriteString(row("enter", "view full details (untruncated description, source, raw row)"))
 	b.WriteString(row("n", "new entry (manual income/expense)"))
@@ -1443,6 +1652,7 @@ func (m Model) helpContent() string {
 	b.WriteString(row("c", "set category for selected entry"))
 	b.WriteString(section("Data"))
 	b.WriteString(row("/", "search transactions (esc clears)"))
+	b.WriteString(row("f", "filter by category — fuzzy-searchable popup (esc clears)"))
 	b.WriteString(row("s", "summary — categories, charts, budget goals"))
 	b.WriteString(section("Accounts"))
 	b.WriteString("  " + styleHelp.Render("No separate \"create account\" step — an account is just a text tag") + "\n")
@@ -1532,7 +1742,7 @@ func (m Model) renderSummaryView() string {
 	if m.vp.TotalLineCount() > m.vp.Height {
 		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
 	}
-	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
+	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  y:year  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
 	return b.String()
 }
 
@@ -1684,7 +1894,7 @@ func runImportCmd(path, account string, useAI bool) tea.Cmd {
 // baking a LIKE clause into the query. Store.Filter.Query / the SQL LIKE
 // path still exists and is still used by the CLI (`budgetctl list --query`),
 // just not from here anymore.
-func loadCmd(month, account string) tea.Cmd {
+func loadCmd(month, account, category string) tea.Cmd {
 	return func() tea.Msg {
 		s, err := store.New(config.DBPath())
 		if err != nil {
@@ -1693,14 +1903,18 @@ func loadCmd(month, account string) tea.Cmd {
 		defer s.Close()
 		ctx := context.Background()
 
-		txs, err := s.List(ctx, store.Filter{Month: month, Account: account, Limit: 500})
+		txs, err := s.List(ctx, store.Filter{Month: month, Account: account, Category: category, Limit: 500})
 		if err != nil {
 			return errMsg{err}
 		}
 		months, _ := s.ListMonths(ctx)
 		accounts, _ := s.ListAccounts(ctx)
+		categories, _ := s.ListCategories(ctx)
 
-		// summary for active month (and account, if one is selected)
+		// summary for active month (and account, if one is selected) — NOT
+		// scoped to the category filter: the point of the summary is to
+		// see spend ACROSS categories, filtering it to one category would
+		// make the "By category" breakdown show just that one row.
 		sum, _ := s.Summary(ctx, month, account)
 
 		// goals with current-month spend (always across all accounts — a
@@ -1709,7 +1923,7 @@ func loadCmd(month, account string) tea.Cmd {
 
 		trend, _ := s.MonthlyTrend(ctx, account, 6)
 
-		return txLoadedMsg{txs: txs, months: months, accounts: accounts, sum: sum, goals: goals, trend: trend}
+		return txLoadedMsg{txs: txs, months: months, accounts: accounts, categories: categories, sum: sum, goals: goals, trend: trend}
 	}
 }
 
