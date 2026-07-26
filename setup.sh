@@ -22,7 +22,11 @@ echo "✓ Built"
 
 # ── Install binary ────────────────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
-cp "$BINARY" "$INSTALL_DIR/$BINARY"
+# mv (rename), not cp: cp overwrites the target file's bytes in place,
+# which leaves macOS's cached code-signature check for that inode stale
+# and the next launch gets silently SIGKILLed ("load code signature error").
+# mv swaps in a fresh inode, so this can't happen.
+mv "$BINARY" "$INSTALL_DIR/$BINARY"
 chmod +x "$INSTALL_DIR/$BINARY"
 echo "✓ Installed to $INSTALL_DIR/$BINARY"
 
