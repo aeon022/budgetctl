@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aeon022/budgetctl/internal/config"
+	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -61,11 +64,25 @@ var goalDeleteCmd = &cobra.Command{
 	},
 }
 
+// goalAlertStatus mirrors the terminal output's ok/warn/OVER thresholds so
+// JSON consumers (like the suite-wide today dashboard) don't have to
+// reimplement the 80%/100% cutoffs themselves.
+func goalAlertStatus(pct float64) string {
+	if pct >= 100 {
+		return "over"
+	}
+	if pct >= 80 {
+		return "warn"
+	}
+	return "ok"
+}
+
 var goalListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List budget goals with current month's progress",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		month, _ := cmd.Flags().GetString("month")
+		asJSON, _ := cmd.Flags().GetBool("json")
 		if month == "" {
 			month = time.Now().Format("2006-01")
 		}
@@ -80,6 +97,30 @@ var goalListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		if asJSON {
+			type goalAlert struct {
+				models.GoalStatus
+				Status string `json:"status"`
+			}
+			data := make([]goalAlert, 0, len(statuses))
+			alerts := 0
+			for _, gs := range statuses {
+				st := goalAlertStatus(gs.Percent)
+				if st != "ok" {
+					alerts++
+				}
+				data = append(data, goalAlert{GoalStatus: gs, Status: st})
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(map[string]any{
+				"tool": "budgetctl", "command": "goal list",
+				"month": month, "alerts": alerts,
+				"data": data,
+			})
+		}
+
 		if len(statuses) == 0 {
 			fmt.Println("No budget goals set. Use: budgetctl goal set <category> <amount>")
 			return nil
@@ -118,4 +159,5 @@ func init() {
 	goalCmd.AddCommand(goalDeleteCmd)
 	goalCmd.AddCommand(goalListCmd)
 	goalListCmd.Flags().StringP("month", "m", "", "Month (YYYY-MM, default: current)")
+	goalListCmd.Flags().Bool("json", false, "Output as JSON")
 }
