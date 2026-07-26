@@ -136,6 +136,7 @@ type Model struct {
 	txs           []models.Transaction // filtered (by searchQ) view of allTxs
 	allTxs        []models.Transaction // everything loaded for the current month/account scope
 	cursor        int
+	hoverRow      int // m.txs index under the mouse cursor, -1 when none
 	months        []string // ["2026-06", "2026-05", ...]
 	activeTab     int      // index into months; -1 = all
 	accounts      []string // ["N26", "ING", ...]
@@ -195,7 +196,7 @@ func New() Model {
 	ci := textinput.New()
 	ci.Placeholder = "category…"
 	ci.CharLimit = 60
-	return Model{searchInput: si, catInput: ci, activeTab: 0, activeAccount: -1}
+	return Model{searchInput: si, catInput: ci, activeTab: 0, activeAccount: -1, hoverRow: -1}
 }
 
 func newForm(t *models.Transaction) [fCount]textinput.Model {
@@ -225,7 +226,7 @@ func newForm(t *models.Transaction) [fCount]textinput.Model {
 
 func Run() error {
 	m := New()
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	_, err := p.Run()
 	return err
 }
@@ -405,6 +406,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if i := m.rowHitTest(msg.Y); i >= 0 {
 				m.cursor = i
+			}
+		case tea.MouseButtonNone:
+			if msg.Action == tea.MouseActionMotion && m.view == viewList {
+				m.hoverRow = m.rowHitTest(msg.Y)
 			}
 		}
 		return m, nil
@@ -1557,13 +1562,16 @@ func (m Model) renderList() string {
 		for i := start; i < end; i++ {
 			t := &m.txs[i]
 			var line string
-			if i == m.cursor {
+			switch {
+			case i == m.cursor:
 				// The cursor row wraps its whole line in a single
 				// styleSelected.Render() call below — nesting highlighted
 				// (real-ANSI) text inside that would clobber its background
 				// for everything after the highlight, so no query here.
 				line = styleSelected.Width(rowW).Render(formatTxRow(t, rowW, ""))
-			} else {
+			case i == m.hoverRow:
+				line = theme.Hover.Width(rowW).Render(formatTxRow(t, rowW, ""))
+			default:
 				line = formatTxRow(t, rowW, m.searchQ)
 			}
 			b.WriteString("  " + line + "\n")
