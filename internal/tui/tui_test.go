@@ -812,7 +812,7 @@ func TestRenderSummary_IncludesTrendWhenMultipleMonths(t *testing.T) {
 		{Month: "2026-06", Net: -10},
 		{Month: "2026-07", Net: 50},
 	}
-	out := renderSummary(sum, nil, trend, 100)
+	out := renderSummary(sum, nil, trend, nil, 100)
 	if !strings.Contains(out, "Trend (last 2 months)") {
 		t.Errorf("expected a trend section for a 2-month history, got:\n%s", out)
 	}
@@ -820,13 +820,25 @@ func TestRenderSummary_IncludesTrendWhenMultipleMonths(t *testing.T) {
 
 func TestRenderSummary_OmitsTrendWithOneOrZeroMonths(t *testing.T) {
 	sum := &models.Summary{Month: "2026-07", Income: 100, Expenses: -50, Net: 50, ByCategory: map[string]float64{}}
-	out := renderSummary(sum, nil, []models.MonthlyPoint{{Month: "2026-07", Net: 50}}, 100)
+	out := renderSummary(sum, nil, []models.MonthlyPoint{{Month: "2026-07", Net: 50}}, nil, 100)
 	if strings.Contains(out, "Trend (") {
 		t.Errorf("expected no trend section with only 1 month of history, got:\n%s", out)
 	}
-	out = renderSummary(sum, nil, nil, 100)
+	out = renderSummary(sum, nil, nil, nil, 100)
 	if strings.Contains(out, "Trend (") {
 		t.Errorf("expected no trend section with no history, got:\n%s", out)
+	}
+}
+
+func TestRenderSummary_SavingsInsightsNormalizesToMonthly(t *testing.T) {
+	sum := &models.Summary{Month: "2026-07", Income: 100, Expenses: -50, Net: 50, ByCategory: map[string]float64{}}
+	recurring := []budget.RecurringPattern{
+		{Description: "Netflix", Amount: 12, Frequency: "monthly"},
+		{Description: "Insurance", Amount: 120, Frequency: "annual"}, // → 10€/month
+	}
+	out := renderSummary(sum, nil, nil, recurring, 100)
+	if !strings.Contains(out, "2 recurring payments ≈ 22.00 €/month") {
+		t.Errorf("expected annual payment normalized to 10€/month (total 22€), got:\n%s", out)
 	}
 }
 

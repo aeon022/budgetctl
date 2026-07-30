@@ -113,7 +113,9 @@ type txLoadedMsg struct {
 	sum        *models.Summary
 	goals      []models.GoalStatus
 	trend      []models.MonthlyPoint
+	recurring  []budget.RecurringPattern
 }
+type searchLoadedMsg struct{ txs []models.Transaction }
 type errMsg struct{ err error }
 type txSavedMsg struct{ err error }
 type txDeletedMsg struct{ err error }
@@ -144,6 +146,8 @@ type Model struct {
 	summary       *models.Summary
 	goals         []models.GoalStatus
 	trend         []models.MonthlyPoint
+	recurring     []budget.RecurringPattern
+	searchTxs     []models.Transaction // all months (current account/category scope) — populated on "/", searched instead of allTxs so search isn't stuck on the active month tab
 	searchQ       string
 	searching     bool
 	searchInput   textinput.Model
@@ -313,6 +317,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.summary = msg.sum
 		m.goals = msg.goals
 		m.trend = msg.trend
+		m.recurring = msg.recurring
 		if len(msg.months) > 0 {
 			m.months = msg.months
 		}
@@ -325,7 +330,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(m.txs)-1)
 		}
 		if m.view == viewSummary && m.summary != nil {
-			m.vp.SetContent(renderSummary(m.summary, m.goals, m.trend, m.width))
+			m.vp.SetContent(renderSummary(m.summary, m.goals, m.trend, m.recurring, m.width))
+		}
+
+	case searchLoadedMsg:
+		m.searchTxs = msg.txs
+		if m.searching || m.searchQ != "" {
+			m.txs = filterTxs(m.searchTxs, m.searchQ)
+			if m.cursor >= len(m.txs) {
+				m.cursor = max(0, len(m.txs)-1)
+			}
 		}
 
 	case errMsg:
@@ -768,7 +782,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchInput, cmd = m.searchInput.Update(msg)
 			m.searchQ = m.searchInput.Value()
 			m.cursor = 0
-			m.txs = filterTxs(m.allTxs, m.searchQ)
+			m.txs = filterTxs(m.searchTxs, m.searchQ)
 			return m, cmd
 		}
 		return m, nil
@@ -833,12 +847,14 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = max(0, len(m.txs)-1)
 	case "S", "s":
 		m.view = viewSummary
-		m.vp.SetContent(renderSummary(m.summary, m.goals, m.trend, m.width))
+		m.vp.SetContent(renderSummary(m.summary, m.goals, m.trend, m.recurring, m.width))
 		m.vp.GotoTop()
 	case "/":
 		m.searching = true
 		m.searchInput.Focus()
 		m.searchInput.SetValue("")
+		m.searchTxs = m.allTxs // placeholder so the list isn't empty while the all-months fetch is in flight
+		return m, loadSearchCmd(m.activeAccountName(), m.categoryFilter)
 	case "?":
 		m = m.openHelp()
 	case "n":
@@ -1600,6 +1616,11 @@ func (m Model) renderList() string {
 		bar = styleErr.Render("✗ " + m.err.Error())
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
+	} else if w < 150 {
+		// full legend is 139 cols — wider than most terminals, where it wraps
+		// and mangles the divider/net line below it. Below that width, show
+		// only the everyday keys and point to "?" for the rest.
+		bar = styleHelp.Render("enter:details  n:new  s:summary  /:search  ?:help  q:quit")
 	} else {
 		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  f:filter  tab:month  y:year  ]:account  ?:help  q:quit")
 	}
@@ -1754,7 +1775,7 @@ func (m Model) renderSummaryView() string {
 	return b.String()
 }
 
-func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []models.MonthlyPoint, width int) string {
+func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []models.MonthlyPoint, recurring []budget.RecurringPattern, width int) string {
 	if sum == nil {
 		return "No data for this month."
 	}
@@ -1781,7 +1802,30 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []model
 			nets = append(nets, p.Net)
 			labels = append(labels, p.Month)
 		}
-		b.WriteString("  " + sparkline(nets) + "  " + styleMuted.Render(fmt.Sprintf("(%s → %s)", labels[0], labels[len(labels)-1])) + "\n")
+		b.WriteString("  " + sparkline(nets) + "  " + styleMuted.Render(fmt.Sprintf("(%s → %s)", labels[0], labels[len(labels)-1])) + "\n\n")
+
+		// Per-month breakdown, grouped by year — the sparkline only plots
+		// Net, but each MonthlyPoint already carries Income/Expenses too;
+		// newest first to match the transaction list's own ordering.
+		lastYear := ""
+		for i := len(trend) - 1; i >= 0; i-- {
+			p := trend[i]
+			year := p.Month[:4]
+			if year != lastYear {
+				b.WriteString("\n  " + styleSummaryH.Render(year) + "\n")
+				lastYear = year
+			}
+			pNetColor := styleOK
+			if p.Net < 0 {
+				pNetColor = styleExpense
+			}
+			b.WriteString(fmt.Sprintf("  %-9s %s  %s  %s\n",
+				p.Month,
+				styleIncome.Render(fmt.Sprintf("%+9.2f €", p.Income)),
+				styleExpense.Render(fmt.Sprintf("%+9.2f €", p.Expenses)),
+				pNetColor.Render(fmt.Sprintf("%+9.2f €", p.Net)),
+			))
+		}
 	}
 
 	b.WriteString("\n  " + styleSummaryH.Render("By category:") + "\n\n")
@@ -1865,6 +1909,47 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []model
 		}
 	}
 
+	// ── Savings insights ────────────────────────────────────────────────────
+	// Recurring payments normalized to a monthly figure (weekly × 4.33,
+	// annual ÷ 12) so "what am I paying every month on autopilot" is one
+	// number, not three unit systems mixed together — the cheapest concrete
+	// answer to "how can I save" without inventing new tracking.
+	if len(recurring) > 0 {
+		sorted := append([]budget.RecurringPattern(nil), recurring...)
+		monthly := func(p budget.RecurringPattern) float64 {
+			switch p.Frequency {
+			case "weekly":
+				return p.Amount * 4.33
+			case "annual":
+				return p.Amount / 12
+			default:
+				return p.Amount
+			}
+		}
+		sort.Slice(sorted, func(i, j int) bool { return monthly(sorted[i]) > monthly(sorted[j]) })
+
+		var total float64
+		for _, p := range sorted {
+			total += monthly(p)
+		}
+
+		b.WriteString("\n  " + styleSummaryH.Render("Savings insights:") + "\n\n")
+		b.WriteString(fmt.Sprintf("  %d recurring payments ≈ %s\n\n",
+			len(sorted), styleExpense.Render(fmt.Sprintf("%.2f €/month", total))))
+		for _, p := range sorted {
+			cat := p.Category
+			if cat == "" {
+				cat = "(uncategorized)"
+			}
+			b.WriteString(fmt.Sprintf("  %-30s %s  %-8s %s\n",
+				truncRunes(p.Description, 30),
+				styleExpense.Render(fmt.Sprintf("%7.2f €", p.Amount)),
+				p.Frequency,
+				styleCategory.Render(cat),
+			))
+		}
+	}
+
 	_ = width
 	return b.String()
 }
@@ -1929,9 +2014,35 @@ func loadCmd(month, account, category string) tea.Cmd {
 		// budget goal like "dining < 200€" isn't naturally per-account)
 		goals, _ := s.GoalStatuses(ctx, month)
 
-		trend, _ := s.MonthlyTrend(ctx, account, 6)
+		trend, _ := s.MonthlyTrend(ctx, account, 12)
 
-		return txLoadedMsg{txs: txs, months: months, accounts: accounts, categories: categories, sum: sum, goals: goals, trend: trend}
+		// Recurring-payment detection needs the full history, not just the
+		// active month — reuses the same detector as the `recurring` CLI
+		// command, just surfaced in the summary popup too.
+		var recurring []budget.RecurringPattern
+		if allTxs, err := s.List(ctx, store.Filter{}); err == nil {
+			recurring = budget.DetectRecurring(allTxs)
+		}
+
+		return txLoadedMsg{txs: txs, months: months, accounts: accounts, categories: categories, sum: sum, goals: goals, trend: trend, recurring: recurring}
+	}
+}
+
+// loadSearchCmd fetches every transaction in the current account/category
+// scope, unbounded by month — "/" search used to only see whatever the
+// active month tab had loaded, so a match sitting in any other month was
+// simply invisible until you clicked through tabs to find it. No Limit (all
+// 880-ish rows for a real account is nothing for local SQLite), matching
+// what DetectRecurring already does for the same reason.
+func loadSearchCmd(account, category string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath())
+		if err != nil {
+			return searchLoadedMsg{}
+		}
+		defer s.Close()
+		txs, _ := s.List(context.Background(), store.Filter{Account: account, Category: category})
+		return searchLoadedMsg{txs: txs}
 	}
 }
 
