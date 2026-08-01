@@ -827,6 +827,22 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// jump to the nth visible (on-screen) transaction row — reuses
+		// rowHitTest's scroll-window math so "3" lands on the same row a
+		// click at that screen position would.
+		n := int(msg.String()[0] - '0')
+		listH := m.height - m.listStartRow() - 2
+		if listH < 1 {
+			listH = 1
+		}
+		winStart := 0
+		if m.cursor >= listH {
+			winStart = m.cursor - listH + 1
+		}
+		if idx := winStart + n - 1; idx < len(m.txs) {
+			m.cursor = idx
+		}
 	case "j", "down":
 		if m.cursor < len(m.txs)-1 {
 			m.cursor++
