@@ -73,12 +73,12 @@ var (
 	colorAmber  = theme.Amber
 
 	styleTabActive = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("15")).
+			Foreground(theme.OnAccent).
 			Background(colorBlue).
 			Padding(0, 2)
 	styleTabInact      = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
 	styleAcctTabActive = lipgloss.NewStyle().Bold(true).
-				Foreground(lipgloss.Color("15")).
+				Foreground(theme.OnAccent).
 				Background(colorGreen).
 				Padding(0, 2)
 	styleAcctTabInact = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
