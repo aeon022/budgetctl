@@ -171,6 +171,11 @@ type Model struct {
 	catInput     textinput.Model
 	deleteTarget *models.Transaction
 
+	// undo: "u" within undoWindow of a delete restores the deleted row —
+	// same pattern and window taskctl uses for its own delete-undo.
+	// statusTime (set alongside status below) doubles as its expiry clock.
+	lastDeleted *models.Transaction
+
 	// "enter" transaction detail popup
 	detailTx *models.Transaction
 
@@ -361,7 +366,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
-			m.setStatus("deleted")
+			// Don't clobber the "Deleted X — press u to undo" toast the
+			// delete-confirm handler already set — this message arrives
+			// right after it, and setStatus would both overwrite the text
+			// and reset the (longer) undo-window clock.
+			if m.lastDeleted == nil {
+				m.setStatus("deleted")
+			}
 			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 
@@ -443,8 +454,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		m.err = nil
-		if time.Since(m.statusTime) > 3*time.Second {
+		// The delete-undo toast gets the longer undoWindow instead of the
+		// usual 3s — it's also the window "u" checks below, so the message
+		// and the capability it describes expire together.
+		clearAfter := 3 * time.Second
+		if m.lastDeleted != nil {
+			clearAfter = undoWindow
+		}
+		if time.Since(m.statusTime) > clearAfter {
 			m.status = ""
+			m.lastDeleted = nil
 		}
 		switch m.view {
 		case viewList:
@@ -748,6 +767,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "y", "Y":
 			target := m.deleteTarget
 			m.deleteTarget = nil
+			m.lastDeleted = target
+			m.status = fmt.Sprintf("Deleted %q — press u to undo", target.Description)
+			m.statusTime = time.Now()
 			return m, deleteTxCmd(target.ID)
 		default:
 			m.deleteTarget = nil
@@ -917,6 +939,13 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.txs) > 0 {
 			t := m.txs[m.cursor]
 			m.deleteTarget = &t
+		}
+	case "u":
+		if m.lastDeleted != nil {
+			t := m.lastDeleted
+			m.lastDeleted = nil
+			m.status = ""
+			return m, insertTxCmd(t)
 		}
 	case "c":
 		if len(m.txs) > 0 {
@@ -1651,7 +1680,7 @@ func (m Model) renderList() string {
 		// only the everyday keys and point to "?" for the rest.
 		bar = styleHelp.Render("enter:details  n:new  s:summary  /:search  ?:help  q:quit")
 	} else {
-		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  c:categorize  s:summary  /:search  f:filter  tab:month  y:year  ]:account  ?:help  q:quit")
+		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  u:undo  c:categorize  s:summary  /:search  f:filter  tab:month  y:year  ]:account  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -2086,6 +2115,10 @@ func (m *Model) setStatus(s string) {
 // doubleClickWindow opens the detail popup on a second click within this
 // window, same pattern and duration taskctl uses for its own double-click.
 const doubleClickWindow = 400 * time.Millisecond
+
+// undoWindow is how long after a delete "u" still restores it — same
+// duration taskctl uses for its own delete-undo.
+const undoWindow = 5 * time.Second
 
 const payeeColW = 20
 
