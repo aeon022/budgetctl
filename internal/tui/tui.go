@@ -430,7 +430,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		m.err = nil
-		if time.Since(m.statusTime) > 4*time.Second {
+		if time.Since(m.statusTime) > 3*time.Second {
 			m.status = ""
 		}
 		switch m.view {
