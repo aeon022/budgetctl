@@ -171,6 +171,13 @@ type Model struct {
 	catInput     textinput.Model
 	deleteTarget *models.Transaction
 
+	// batch select mode ("v") — bulk-categorize, same pattern taskctl's
+	// own select mode uses. When categorizing is entered while selecting
+	// is true, committing applies to every selected transaction instead
+	// of just the cursor row.
+	selecting bool
+	selected  map[string]bool // keyed by transaction ID
+
 	// undo: "u" within undoWindow of a delete restores the deleted row —
 	// same pattern and window taskctl uses for its own delete-undo.
 	// statusTime (set alongside status below) doubles as its expiry clock.
@@ -783,9 +790,18 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			m.categorizing = false
 			m.catInput.Blur()
+			cat := strings.TrimSpace(m.catInput.Value())
+			if m.selecting && len(m.selected) > 0 {
+				ids := make([]string, 0, len(m.selected))
+				for id := range m.selected {
+					ids = append(ids, id)
+				}
+				m.selecting = false
+				m.selected = nil
+				return m, batchSetCategoryCmd(ids, cat)
+			}
 			if len(m.txs) > 0 {
 				id := m.txs[m.cursor].ID
-				cat := strings.TrimSpace(m.catInput.Value())
 				return m, setCategoryCmd(id, cat)
 			}
 			return m, nil
@@ -797,6 +813,44 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.catInput, cmd = m.catInput.Update(msg)
 		return m, cmd
+	}
+
+	// batch select mode
+	if m.selecting {
+		switch msg.String() {
+		case "esc":
+			m.selecting = false
+			m.selected = nil
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.txs)-1 {
+				m.cursor++
+			}
+		case " ":
+			if len(m.txs) > 0 {
+				id := m.txs[m.cursor].ID
+				if m.selected[id] {
+					delete(m.selected, id)
+				} else {
+					m.selected[id] = true
+				}
+			}
+		case "A":
+			for _, t := range m.txs {
+				m.selected[t.ID] = true
+			}
+		case "c":
+			if len(m.selected) > 0 {
+				m.categorizing = true
+				m.catInput.SetValue("")
+				m.catInput.CursorEnd()
+				return m, m.catInput.Focus()
+			}
+		}
+		return m, nil
 	}
 
 	if m.searching {
@@ -953,6 +1007,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.catInput.SetValue(m.txs[m.cursor].Category)
 			m.catInput.CursorEnd()
 			return m, m.catInput.Focus()
+		}
+	case "v":
+		if len(m.txs) > 0 {
+			m.selecting = true
+			m.selected = map[string]bool{m.txs[m.cursor].ID: true}
 		}
 	case "esc":
 		switch {
@@ -1122,6 +1181,26 @@ func setCategoryCmd(id, category string) tea.Cmd {
 		}
 		defer s.Close()
 		return txSavedMsg{s.SetCategory(context.Background(), id, category)}
+	}
+}
+
+// batchSetCategoryCmd is the batch-mode ("v") version of setCategoryCmd —
+// applies one category to every selected transaction.
+func batchSetCategoryCmd(ids []string, category string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath())
+		if err != nil {
+			return txSavedMsg{err}
+		}
+		defer s.Close()
+		ctx := context.Background()
+		var lastErr error
+		for _, id := range ids {
+			if err := s.SetCategory(ctx, id, category); err != nil {
+				lastErr = err
+			}
+		}
+		return txSavedMsg{lastErr}
 	}
 }
 
@@ -1617,6 +1696,9 @@ func (m Model) renderList() string {
 	}
 	if m.categorizing {
 		b.WriteString("  " + styleCategory.Render("category: ") + m.catInput.View() + "\n")
+	} else if m.selecting {
+		b.WriteString("  " + styleSelected.Render(fmt.Sprintf("select: %d", len(m.selected))) +
+			styleHelp.Render("  space toggle  A all  c categorize  esc cancel") + "\n")
 	}
 
 	listH := m.height - m.listStartRow() - 2 // divider + trailing status bar
@@ -1633,8 +1715,20 @@ func (m Model) renderList() string {
 			start = m.cursor - listH + 1
 		}
 		end := min(len(m.txs), start+listH)
+		selRowW := rowW
+		if m.selecting {
+			selRowW -= 4 // room for the "[x] " checkbox prefix
+		}
 		for i := start; i < end; i++ {
 			t := &m.txs[i]
+			checkbox := ""
+			if m.selecting {
+				if m.selected[t.ID] {
+					checkbox = styleSelected.Render("[x]") + " "
+				} else {
+					checkbox = styleHelp.Render("[ ]") + " "
+				}
+			}
 			var line string
 			switch {
 			case i == m.cursor:
@@ -1642,13 +1736,13 @@ func (m Model) renderList() string {
 				// styleSelected.Render() call below — nesting highlighted
 				// (real-ANSI) text inside that would clobber its background
 				// for everything after the highlight, so no query here.
-				line = styleSelected.Width(rowW).Render(formatTxRow(t, rowW, ""))
+				line = styleSelected.Width(selRowW).Render(formatTxRow(t, selRowW, ""))
 			case i == m.hoverRow:
-				line = theme.Hover.Width(rowW).Render(formatTxRow(t, rowW, ""))
+				line = theme.Hover.Width(selRowW).Render(formatTxRow(t, selRowW, ""))
 			default:
-				line = formatTxRow(t, rowW, m.searchQ)
+				line = formatTxRow(t, selRowW, m.searchQ)
 			}
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + checkbox + line + "\n")
 		}
 	}
 
