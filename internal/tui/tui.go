@@ -139,6 +139,8 @@ type Model struct {
 	allTxs        []models.Transaction // everything loaded for the current month/account scope
 	cursor        int
 	hoverRow      int // m.txs index under the mouse cursor, -1 when none
+	lastClickRow  int // m.txs index of the previous left-click, -1 when none — double-click opens the detail popup, same window/pattern taskctl uses
+	lastClickAt   time.Time
 	months        []string // ["2026-06", "2026-05", ...]
 	activeTab     int      // index into months; -1 = all
 	accounts      []string // ["N26", "ING", ...]
@@ -200,7 +202,7 @@ func New() Model {
 	ci := textinput.New()
 	ci.Placeholder = "category…"
 	ci.CharLimit = 60
-	return Model{searchInput: si, catInput: ci, activeTab: 0, activeAccount: -1, hoverRow: -1}
+	return Model{searchInput: si, catInput: ci, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
 }
 
 func newForm(t *models.Transaction) [fCount]textinput.Model {
@@ -419,7 +421,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if i := m.rowHitTest(msg.Y); i >= 0 {
+				now := time.Now()
+				if i == m.lastClickRow && now.Sub(m.lastClickAt) < doubleClickWindow {
+					m.cursor = i
+					m.lastClickRow = -1 // consumed, so a third click starts fresh
+					t := m.txs[i]
+					m.detailTx = &t
+					m.view = viewDetail
+					return m, nil
+				}
 				m.cursor = i
+				m.lastClickRow = i
+				m.lastClickAt = now
 			}
 		case tea.MouseButtonNone:
 			if msg.Action == tea.MouseActionMotion && m.view == viewList {
@@ -2070,6 +2083,10 @@ func (m *Model) setStatus(s string) {
 }
 
 // payeeColW is the fixed display width of the Payee column in formatTxRow.
+// doubleClickWindow opens the detail popup on a second click within this
+// window, same pattern and duration taskctl uses for its own double-click.
+const doubleClickWindow = 400 * time.Millisecond
+
 const payeeColW = 20
 
 func formatTxRow(t *models.Transaction, width int, query string) string {
