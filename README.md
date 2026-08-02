@@ -151,6 +151,19 @@ Starts an MCP (Model Context Protocol) server over stdio. Exposes all budget dat
 
 ---
 
+## Syncing across devices
+
+By default budgetctl's database lives at `~/.local/share/budgetctl/budget.db`, local to this machine. To share it across devices, point it at a folder you already sync yourself (iCloud Drive, Dropbox, Syncthing, ...) — either:
+
+- **Env var**: `export BUDGETCTL_DATA_DIR="$HOME/Library/Mobile Documents/com~apple~CloudDocs/budgetctl"`
+- **Config file** (`~/.config/budgetctl/budgetctl.yaml`): `data_dir: "~/Library/Mobile Documents/com~apple~CloudDocs/budgetctl"`
+
+Once set, budgetctl automatically switches its SQLite journal mode from WAL to rollback-journal — WAL splits the database across multiple files that a folder-sync client can't update atomically together, so this switch keeps the directory down to a single consistent file whenever budgetctl isn't actively writing. A same-machine lock also prevents two budgetctl processes from opening the database at once (run `budgetctl doctor` to see the current mode and path).
+
+This only protects against the same-machine and stale-snapshot failure modes — it does not resolve two different machines editing at the exact same instant. If iCloud Drive shows a file as "not downloaded yet" (Optimize Mac Storage), budgetctl reports that explicitly instead of a bare error.
+
+---
+
 ## Supported CSV Formats
 
 | Bank | Language | Key Columns | Notes |
