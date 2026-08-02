@@ -153,8 +153,9 @@ Starts an MCP (Model Context Protocol) server over stdio. Exposes all budget dat
 
 ## Syncing across devices
 
-By default budgetctl's database lives at `~/.local/share/budgetctl/budget.db`, local to this machine. To share it across devices, point it at a folder you already sync yourself (iCloud Drive, Dropbox, Syncthing, ...) — either:
+By default budgetctl's database lives at `~/.local/share/budgetctl/budget.db`, local to this machine. To share it across devices, point it at a folder you already sync yourself (iCloud Drive, Dropbox, Syncthing, ...) — any of:
 
+- **TUI**: press `o` for Settings, then `b` to browse for a folder. Drag a folder from Finder onto the terminal window while the browser is focused and it types the path in for you. Navigate with `enter`/arrows, press `s` to sync to the folder you're currently in, confirm with `y`. If you already have local data, it's moved there for you; if the folder already has a database (e.g. another device already set this up), that one is used instead.
 - **Env var**: `export BUDGETCTL_DATA_DIR="$HOME/Library/Mobile Documents/com~apple~CloudDocs/budgetctl"`
 - **Config file** (`~/.config/budgetctl/budgetctl.yaml`): `data_dir: "~/Library/Mobile Documents/com~apple~CloudDocs/budgetctl"`
 
