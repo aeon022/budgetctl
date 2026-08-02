@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -36,6 +37,7 @@ const (
 	viewImport       view = iota
 	viewDetail       view = iota
 	viewCategoryPick view = iota
+	viewSettings     view = iota
 )
 
 // ── Import assistant steps ──────────────────────────────────────────────────
@@ -127,6 +129,10 @@ type importDoneMsg struct {
 	res budget.ImportResult
 	err error
 }
+type settingsAppliedMsg struct {
+	status string
+	err    error
+}
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -201,6 +207,19 @@ type Model struct {
 	importResult      budget.ImportResult
 	importAcctInput   textinput.Model
 	importEditingAcct bool
+
+	// Settings ("o") — browse for a folder to sync budgetctl's data to
+	// (iCloud Drive, Dropbox, ...). Reuses fp (the CSV import filepicker,
+	// mutually exclusive with it) in directory-only mode. Deliberately
+	// does NOT rely on fp.DidSelectFile: with DirAllowed set, Enter both
+	// selects AND descends into a directory, so browsing would end the
+	// moment you tried to go deeper — a dedicated "s" key confirms
+	// fp.CurrentDirectory instead, leaving Enter free to navigate.
+	settingsPicking    bool
+	settingsConfirming bool
+	settingsPendingDir string // "" = reset to the local default, when settingsConfirming
+	settingsOldPath    string // config.DBPath() before the change, for the move
+	settingsErr        error
 
 	status     string
 	statusTime time.Time
@@ -404,6 +423,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.importStep = importDone
 		return m, nil
 
+	case settingsAppliedMsg:
+		m.settingsPendingDir = ""
+		m.settingsOldPath = ""
+		if msg.err != nil {
+			m.settingsErr = msg.err
+			return m, nil
+		}
+		m.settingsErr = nil
+		m.status = msg.status
+		m.statusTime = time.Now()
+		return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+
 	case tea.MouseMsg:
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
@@ -513,6 +544,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case viewCategoryPick:
 			return m.updateCategoryPick(msg)
+		case viewSettings:
+			return m.updateSettings(msg)
 		}
 	}
 
@@ -524,6 +557,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.view == viewImport && m.importStep == importPickFile {
 		// Non-key messages (directory-read results, etc.) the filepicker
 		// needs to function — key messages are handled in updateImport.
+		var cmd tea.Cmd
+		m.fp, cmd = m.fp.Update(msg)
+		return m, cmd
+	}
+	if m.view == viewSettings && m.settingsPicking {
 		var cmd tea.Cmd
 		m.fp, cmd = m.fp.Update(msg)
 		return m, cmd
@@ -655,6 +693,87 @@ func (m Model) renderCategoryPickPopup() string {
 		Render(b.String())
 }
 
+// renderSettingsPopup renders the "o" settings screen: current data
+// directory + sync mode, a pending-move confirmation, or the directory
+// browser, depending on which sub-state is active.
+func (m Model) renderSettingsPopup() string {
+	w := m.importPopupWidth()
+	contentW := w - 6
+
+	if m.settingsPicking {
+		return m.renderSettingsBrowsePopup(w, contentW)
+	}
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Settings") + "\n\n")
+
+	mode := "local (this machine only)"
+	if config.Shared() {
+		mode = "shared (folder-synced)"
+	}
+	b.WriteString(styleHelp.Render("Data directory:") + "\n")
+	b.WriteString("  " + ansi.Truncate(filepath.Dir(config.DBPath()), contentW-2, "…") + "\n")
+	b.WriteString("  " + styleMuted.Render(mode) + "\n\n")
+
+	if m.settingsConfirming {
+		msg := fmt.Sprintf("Point budgetctl at %s?", m.settingsPendingDir)
+		if m.settingsPendingDir == "" {
+			msg = "Switch back to the local (non-synced) database?"
+		}
+		b.WriteString(styleErr.Render(msg) + "\n\n")
+		b.WriteString(styleMuted.Render("y: confirm  ·  any other key: cancel"))
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBlue).
+			Padding(1, 2).
+			Width(w).
+			Render(b.String())
+	}
+
+	if m.settingsErr != nil {
+		b.WriteString(styleErr.Render("✗ "+m.settingsErr.Error()) + "\n\n")
+	} else if m.status != "" {
+		b.WriteString(styleOK.Render(m.status) + "\n\n")
+	}
+
+	b.WriteString(styleHelp.Render("b") + "  browse for a folder to sync (iCloud Drive, Dropbox, …)\n")
+	if config.Shared() {
+		b.WriteString(styleHelp.Render("r") + "  reset to the local (non-synced) database\n")
+	}
+	b.WriteString("\n" + styleMuted.Render("esc: close"))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Width(w).
+		Render(b.String())
+}
+
+// renderSettingsBrowsePopup renders the directory-only filepicker. Same
+// per-line truncation as renderImportPickFile: bubbles/filepicker never
+// truncates long names itself, and lipgloss's Width() word-wraps instead
+// of truncating, which would desync the list's height from SetHeight's
+// budget.
+func (m Model) renderSettingsBrowsePopup(w, contentW int) string {
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Choose a folder to sync") + "\n")
+	b.WriteString(styleMuted.Render(ansi.Truncate(m.fp.CurrentDirectory, contentW, "…")) + "\n\n")
+
+	for _, line := range strings.Split(m.fp.View(), "\n") {
+		b.WriteString(ansi.Truncate(line, contentW, "…") + "\n")
+	}
+
+	b.WriteString(styleMuted.Render("↑/↓ or j/k: navigate  ·  enter: open folder  ·  s: sync here  ·  esc: cancel"))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Width(w).
+		Render(b.String())
+}
+
 func (m Model) openImport() Model {
 	fp := filepicker.New()
 	fp.AllowedTypes = []string{".csv"}
@@ -765,6 +884,173 @@ func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 	}
 	return m, nil
+}
+
+// openSettings opens the "o" settings popup, showing the current data
+// directory / sync mode and offering to browse for a new one.
+func (m Model) openSettings() Model {
+	m.view = viewSettings
+	m.settingsPicking = false
+	m.settingsConfirming = false
+	m.settingsPendingDir = ""
+	m.settingsErr = nil
+	return m
+}
+
+// openSettingsBrowse opens a directory-only filepicker rooted at iCloud
+// Drive if present (the most common sync target), falling back to the
+// home directory. Reuses the filepicker library in directory mode.
+func (m Model) openSettingsBrowse() (Model, tea.Cmd) {
+	fp := filepicker.New()
+	fp.DirAllowed = true
+	fp.FileAllowed = false
+	fp.AllowedTypes = nil
+	if home, err := os.UserHomeDir(); err == nil {
+		fp.CurrentDirectory = home
+		if icloud := filepath.Join(home, "Library", "Mobile Documents", "com~apple~CloudDocs"); isDir(icloud) {
+			fp.CurrentDirectory = icloud
+		}
+	}
+	h := m.height - 12
+	if h < 5 {
+		h = 5
+	}
+	fp.SetHeight(h)
+
+	m.fp = fp
+	m.settingsPicking = true
+	m.settingsErr = nil
+	return m, m.fp.Init()
+}
+
+// confirmDataDir stages a data_dir change for confirmation before doing
+// anything — moving a real database is worth a deliberate "y", same as
+// the delete confirmation elsewhere in this TUI. newDir == "" means
+// "reset to the local default".
+func (m Model) confirmDataDir(newDir string) Model {
+	m.settingsOldPath = config.DBPath()
+	m.settingsPendingDir = newDir
+	m.settingsConfirming = true
+	m.settingsPicking = false
+	m.settingsErr = nil
+	return m
+}
+
+func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.settingsConfirming {
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "y", "Y":
+			m.settingsConfirming = false
+			return m, applyDataDirCmd(m.settingsOldPath, m.settingsPendingDir)
+		default:
+			m.settingsConfirming = false
+		}
+		return m, nil
+	}
+
+	if m.settingsPicking {
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			m.settingsPicking = false
+			return m, nil
+		case "s":
+			// Deliberately not fp.DidSelectFile/fp.Path: with DirAllowed
+			// set, Enter both descends into a directory AND would satisfy
+			// DidSelectFile, so browsing would end the instant you tried
+			// to go deeper. Reading CurrentDirectory on a dedicated key
+			// keeps Enter free to navigate.
+			return m.confirmDataDir(m.fp.CurrentDirectory), nil
+		}
+		var cmd tea.Cmd
+		m.fp, cmd = m.fp.Update(msg)
+		return m, cmd
+	}
+
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.view = viewList
+		return m, nil
+	case "b":
+		return m.openSettingsBrowse()
+	case "r":
+		if config.Shared() {
+			return m.confirmDataDir(""), nil
+		}
+	}
+	return m, nil
+}
+
+// applyDataDirCmd persists the new data_dir and, if an existing database
+// needs to move to make the change actually take effect, moves it:
+//   - if the new location already has a database, it's used as-is (the
+//     common "joining a device that already set up sync" case) — the
+//     previous local database is left untouched at its old path, not
+//     merged or deleted.
+//   - else if the old location has a database, it's moved to the new
+//     location (the "start syncing my existing data" case).
+//   - else there's nothing to move (a fresh setup).
+func applyDataDirCmd(oldPath, newDir string) tea.Cmd {
+	return func() tea.Msg {
+		if err := config.SetDataDir(newDir); err != nil {
+			return settingsAppliedMsg{err: fmt.Errorf("save config: %w", err)}
+		}
+		if newDir == "" {
+			return settingsAppliedMsg{status: "Switched back to the local database."}
+		}
+
+		newPath := config.DBPath()
+		if newPath == oldPath {
+			return settingsAppliedMsg{status: fmt.Sprintf("Now using %s.", newDir)}
+		}
+		if _, err := os.Stat(newPath); err == nil {
+			return settingsAppliedMsg{status: fmt.Sprintf(
+				"Found an existing database there — now using it (your previous local data is untouched at %s).", oldPath)}
+		}
+		if _, err := os.Stat(oldPath); err == nil {
+			if err := moveFile(oldPath, newPath); err != nil {
+				return settingsAppliedMsg{err: fmt.Errorf("moving existing database: %w", err)}
+			}
+			_ = os.Remove(oldPath + ".lock")
+			return settingsAppliedMsg{status: fmt.Sprintf("Moved your existing data to %s.", newDir)}
+		}
+		return settingsAppliedMsg{status: fmt.Sprintf("Now syncing new data to %s.", newDir)}
+	}
+}
+
+// moveFile renames oldPath to newPath, falling back to copy-then-remove
+// if they're on different filesystems (os.Rename returns EXDEV) — a
+// folder-synced directory (iCloud Drive, Dropbox) is usually on the same
+// volume as $HOME, but not guaranteed.
+func moveFile(oldPath, newPath string) error {
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(oldPath, newPath); err == nil {
+		return nil
+	}
+	src, err := os.Open(oldPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.Create(newPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	return os.Remove(oldPath)
 }
 
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -974,6 +1260,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		m = m.openCategoryPick()
 		return m, m.categoryPickInput.Focus()
+	case "o":
+		m = m.openSettings()
+		return m, nil
 	case "enter":
 		if len(m.txs) > 0 {
 			t := m.txs[m.cursor]
@@ -1223,6 +1512,8 @@ func (m Model) View() string {
 		return overlay.Center(m.renderList(), m.renderDetailPopup(), m.width, m.height, 0)
 	case viewCategoryPick:
 		return overlay.Center(m.renderList(), m.renderCategoryPickPopup(), m.width, m.height, 0)
+	case viewSettings:
+		return overlay.Center(m.renderList(), m.renderSettingsPopup(), m.width, m.height, 0)
 	default:
 		return m.renderList()
 	}
@@ -1843,6 +2134,7 @@ func (m Model) helpContent() string {
 	b.WriteString("  " + styleHelp.Render("Redo a bad import: budgetctl reset --account \"Sparkasse\" (asks to confirm)") + "\n")
 	b.WriteString(row("[ / ]", "cycle accounts (tab/click also works)"))
 	b.WriteString(section("Other"))
+	b.WriteString(row("o", "settings — sync your data across devices (iCloud Drive, Dropbox, …)"))
 	b.WriteString(row("?", "toggle this help"))
 	b.WriteString(row("q", "quit"))
 	b.WriteString("\n" + styleHelp.Render("  Import & categorize on the CLI: budgetctl import file.csv · budgetctl tag PATTERN --category NAME") + "\n")

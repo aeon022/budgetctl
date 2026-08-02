@@ -45,10 +45,38 @@ func Shared() bool {
 	return viper.GetString("data_dir") != ""
 }
 
+// SetDataDir persists data_dir to ~/.config/budgetctl/budgetctl.yaml and
+// updates the running process's view of it immediately, so DBPath/Shared
+// reflect the change without a restart. Pass "" to clear the override and
+// revert to the private default. Used by the TUI's "o" settings screen.
+func SetDataDir(dir string) error {
+	viper.Set("data_dir", contractHome(dir))
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	cfgDir := filepath.Join(home, ".config", "budgetctl")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		return err
+	}
+	return viper.WriteConfigAs(filepath.Join(cfgDir, "budgetctl.yaml"))
+}
+
 func expandHome(p string) string {
 	if len(p) >= 2 && p[:2] == "~/" {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+func contractHome(p string) string {
+	if p == "" {
+		return p
+	}
+	home, _ := os.UserHomeDir()
+	if len(p) > len(home) && p[:len(home)] == home {
+		return "~" + p[len(home):]
 	}
 	return p
 }
