@@ -10,7 +10,7 @@ import (
 
 func testStore(t *testing.T) *store.Store {
 	t.Helper()
-	s, err := store.New(filepath.Join(t.TempDir(), "budget.db"))
+	s, err := store.New(filepath.Join(t.TempDir(), "budget.db"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

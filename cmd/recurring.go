@@ -14,7 +14,7 @@ var recurringCmd = &cobra.Command{
 	Use:   "recurring",
 	Short: "Detect recurring payments (subscriptions, rent, utilities)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}

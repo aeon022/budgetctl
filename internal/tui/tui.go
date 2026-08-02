@@ -1142,7 +1142,7 @@ func (m Model) submitForm() (tea.Model, tea.Cmd) {
 
 func insertTxCmd(t *models.Transaction) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return txSavedMsg{err}
 		}
@@ -1153,7 +1153,7 @@ func insertTxCmd(t *models.Transaction) tea.Cmd {
 
 func updateTxCmd(t *models.Transaction) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return txSavedMsg{err}
 		}
@@ -1164,7 +1164,7 @@ func updateTxCmd(t *models.Transaction) tea.Cmd {
 
 func deleteTxCmd(id string) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return txDeletedMsg{err}
 		}
@@ -1175,7 +1175,7 @@ func deleteTxCmd(id string) tea.Cmd {
 
 func setCategoryCmd(id, category string) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return txSavedMsg{err}
 		}
@@ -1188,7 +1188,7 @@ func setCategoryCmd(id, category string) tea.Cmd {
 // applies one category to every selected transaction.
 func batchSetCategoryCmd(ids []string, category string) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return txSavedMsg{err}
 		}
@@ -2123,7 +2123,7 @@ func parseImportCmd(path string) tea.Cmd {
 // bank-detected account (or "" for generic CSVs) untouched.
 func runImportCmd(path, account string, useAI bool) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return importDoneMsg{err: err}
 		}
@@ -2141,7 +2141,7 @@ func runImportCmd(path, account string, useAI bool) tea.Cmd {
 // just not from here anymore.
 func loadCmd(month, account, category string) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return errMsg{err}
 		}
@@ -2188,7 +2188,7 @@ func loadCmd(month, account, category string) tea.Cmd {
 // what DetectRecurring already does for the same reason.
 func loadSearchCmd(account, category string) tea.Cmd {
 	return func() tea.Msg {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return searchLoadedMsg{}
 		}

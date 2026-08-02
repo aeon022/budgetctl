@@ -28,7 +28,7 @@ transactions. Asks for confirmation unless --yes is passed.`,
 		account, _ := cmd.Flags().GetString("account")
 		skipConfirm, _ := cmd.Flags().GetBool("yes")
 
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}

@@ -22,7 +22,7 @@ var tagCmd = &cobra.Command{
 			return fmt.Errorf("--category is required")
 		}
 
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}
@@ -49,7 +49,7 @@ var applyRulesCmd = &cobra.Command{
 	Use:   "apply-rules",
 	Short: "Re-apply all category rules to existing transactions",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}

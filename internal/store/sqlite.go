@@ -4,26 +4,106 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aeon022/budgetctl/internal/models"
+	"github.com/aeon022/missionctl-core/syncdir"
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ db *sql.DB }
-
-func New(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_journal=WAL&_timeout=5000")
-	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
-	}
-	s := &Store{db: db}
-	return s, s.migrate()
+type Store struct {
+	db   *sql.DB
+	path string
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// budgetctl opens a fresh *Store for nearly every single operation (every
+// TUI message handler, every MCP tool call) rather than holding one open
+// for the process's lifetime, and flock(2) isn't reentrant within a
+// process — a second os.OpenFile+flock on the same path from the same
+// process would otherwise report a spurious conflict against itself. locks
+// reference-counts the real OS-level lock per path: the first New() for a
+// given path acquires it for real, concurrent/sequential New() calls for
+// that same path in this process just increment the count, and only the
+// last matching Close() actually releases it — so a conflict is reported
+// only when a genuinely different process holds it.
+var (
+	lockMu sync.Mutex
+	locks  = map[string]*lockEntry{}
+)
+
+type lockEntry struct {
+	lock  *syncdir.Lock
+	count int
+}
+
+func acquireLock(path string) error {
+	lockMu.Lock()
+	defer lockMu.Unlock()
+	e, ok := locks[path]
+	if !ok {
+		l, err := syncdir.Acquire(path)
+		if err != nil {
+			return err
+		}
+		e = &lockEntry{lock: l}
+		locks[path] = e
+	}
+	e.count++
+	return nil
+}
+
+func releaseLock(path string) {
+	lockMu.Lock()
+	defer lockMu.Unlock()
+	e, ok := locks[path]
+	if !ok {
+		return
+	}
+	e.count--
+	if e.count == 0 {
+		e.lock.Release()
+		delete(locks, path)
+	}
+}
+
+// New opens the database at path. shared must reflect whether path is a
+// user-configured (possibly folder-synced) directory rather than the
+// tool's private default — see config.Shared.
+func New(path string, shared bool) (*Store, error) {
+	if isPlaceholder, placeholder := syncdir.ICloudPlaceholder(path); isPlaceholder {
+		return nil, fmt.Errorf("%s hasn't finished downloading from iCloud yet (found %s) — open Finder and download it, or disable \"Optimize Mac Storage\" for this folder", path, placeholder)
+	}
+
+	if err := acquireLock(path); err != nil {
+		if errors.Is(err, syncdir.ErrLocked) {
+			return nil, fmt.Errorf("budgetctl is already running elsewhere, or a previous session crashed — remove %s.lock if you're sure nothing else is using it", path)
+		}
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite", path+"?_journal="+syncdir.JournalMode(shared)+"&_timeout=5000")
+	if err != nil {
+		releaseLock(path)
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	s := &Store{db: db, path: path}
+	if err := s.migrate(); err != nil {
+		db.Close()
+		releaseLock(path)
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Store) Close() error {
+	err := s.db.Close()
+	releaseLock(s.path)
+	return err
+}
 
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`

@@ -19,7 +19,7 @@ var importCmd = &cobra.Command{
 		account, _ := cmd.Flags().GetString("account")
 		useAI, _ := cmd.Flags().GetBool("ai")
 
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}

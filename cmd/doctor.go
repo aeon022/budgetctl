@@ -14,6 +14,7 @@ var doctorCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		checks := []doctor.Check{
 			doctor.CheckSQLite("Database", config.DBPath(), "transactions"),
+			doctor.CheckDataDir("Data directory", config.DBPath(), config.Shared()),
 		}
 		if !doctor.PrintReport(checks) {
 			os.Exit(1)

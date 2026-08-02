@@ -11,7 +11,7 @@ import (
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := New(filepath.Join(t.TempDir(), "budget.db"))
+	s, err := New(filepath.Join(t.TempDir(), "budget.db"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,13 +94,13 @@ func TestMigrate_AddingPayeeColumnIsIdempotent(t *testing.T) {
 	// same database a second time (simulating an existing user's DB on a
 	// second run) must not error on "duplicate column".
 	path := filepath.Join(t.TempDir(), "budget.db")
-	s1, err := New(path)
+	s1, err := New(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s1.Close()
 
-	s2, err := New(path)
+	s2, err := New(path, false)
 	if err != nil {
 		t.Fatalf("expected re-opening an existing DB to succeed, got: %v", err)
 	}

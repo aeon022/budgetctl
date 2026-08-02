@@ -102,7 +102,7 @@ func handleList(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult
 		month = time.Now().Format("2006-01")
 	}
 
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -141,7 +141,7 @@ func handleSummary(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRes
 	}
 	account := req.GetString("account", "")
 
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -203,7 +203,7 @@ func handleAddTx(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResul
 		}
 	}
 
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -236,7 +236,7 @@ func handleDeleteTx(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if id == "" {
 		return mcp.NewToolResultError("id is required"), nil
 	}
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -266,7 +266,7 @@ func handleImport(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -295,7 +295,7 @@ func handleTag(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult,
 		return mcp.NewToolResultError("pattern and category are required"), nil
 	}
 
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -341,7 +341,7 @@ func handleListGoals(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
 	if month == "" {
 		month = time.Now().Format("2006-01")
 	}
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -376,7 +376,7 @@ func handleSetGoal(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRes
 	if category == "" || monthly <= 0 {
 		return mcp.NewToolResultError("category and positive monthly amount are required"), nil
 	}
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -392,7 +392,7 @@ func handleDeleteGoal(_ context.Context, req mcp.CallToolRequest) (*mcp.CallTool
 	if category == "" {
 		return mcp.NewToolResultError("category is required"), nil
 	}
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -410,7 +410,7 @@ func toolDetectRecurring() mcp.Tool {
 }
 
 func handleDetectRecurring(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -448,7 +448,7 @@ func truncateStr(s string, n int) string {
 }
 
 func handleApplyRules(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

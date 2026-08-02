@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	coreconfig "github.com/aeon022/missionctl-core/config"
 	"github.com/spf13/viper"
 )
 
@@ -17,14 +18,31 @@ func Init() {
 	_ = viper.ReadInConfig()
 }
 
+// DBPath returns the database file path: db_path (legacy, a full file path)
+// if set, else data_dir/budget.db, where data_dir is resolved via
+// coreconfig.ResolveDir — a user-configured directory (e.g. inside iCloud
+// Drive/Dropbox) if the data_dir key is set, else the tool's private
+// default. data_dir takes precedence if both are set.
 func DBPath() string {
+	if dir := viper.GetString("data_dir"); dir != "" {
+		resolved, _ := coreconfig.ResolveDir("budgetctl", dir)
+		return filepath.Join(resolved, "budget.db")
+	}
 	if p := viper.GetString("db_path"); p != "" {
 		return expandHome(p)
 	}
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".local", "share", "budgetctl")
-	_ = os.MkdirAll(dir, 0o755)
+	dir, _ := coreconfig.ResolveDir("budgetctl", "")
 	return filepath.Join(dir, "budget.db")
+}
+
+// Shared reports whether DBPath currently resolves to a user-configured
+// directory (data_dir) rather than the tool's private default — used to
+// decide SQLite journal mode and whether to treat the path as possibly
+// folder-synced. The legacy db_path key is a full file path, not a
+// directory, so it isn't treated as "shared" here even though it's also a
+// user override; data_dir is the supported way to opt into sync safety.
+func Shared() bool {
+	return viper.GetString("data_dir") != ""
 }
 
 func expandHome(p string) string {

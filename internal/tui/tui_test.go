@@ -95,7 +95,7 @@ func TestFormAddsManualTransaction(t *testing.T) {
 		t.Fatalf("must return to list after save, view = %v", m.view)
 	}
 
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestEditFlow(t *testing.T) {
 	defer viper.Set("db_path", "")
 
 	// seed one tx directly
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -676,7 +676,7 @@ func TestImportAssistant_AccountTagAppliedOnImport(t *testing.T) {
 		t.Fatalf("unexpected import error: %v", m.importErr)
 	}
 
-	s, err := store.New(config.DBPath())
+	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		t.Fatal(err)
 	}

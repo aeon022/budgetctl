@@ -22,7 +22,7 @@ var listCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		asJSON, _ := cmd.Flags().GetBool("json")
 
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}

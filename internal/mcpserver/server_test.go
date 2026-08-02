@@ -23,7 +23,7 @@ func setupTestDB(t *testing.T) {
 	viper.Set("db_path", path)
 	t.Cleanup(func() { viper.Set("db_path", "") })
 
-	s, err := store.New(path)
+	s, err := store.New(path, false)
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}

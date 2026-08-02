@@ -32,7 +32,7 @@ var goalSetCmd = &cobra.Command{
 			return fmt.Errorf("amount must be a positive number")
 		}
 
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ var goalDeleteCmd = &cobra.Command{
 	Short: "Remove a budget goal",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}
@@ -87,7 +87,7 @@ var goalListCmd = &cobra.Command{
 			month = time.Now().Format("2006-01")
 		}
 
-		s, err := store.New(config.DBPath())
+		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err
 		}
