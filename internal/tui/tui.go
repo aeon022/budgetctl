@@ -14,6 +14,7 @@ import (
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
+	"github.com/aeon022/missionctl-core/keymap"
 	"github.com/aeon022/missionctl-core/overlay"
 	"github.com/aeon022/missionctl-core/theme"
 	"github.com/charmbracelet/bubbles/filepicker"
@@ -2101,44 +2102,41 @@ func (m Model) renderForm() string {
 }
 
 func (m Model) helpContent() string {
-	keyw := func(k string) string { return styleHeader.Render(fmt.Sprintf("%-10s", k)) }
-	row := func(k, desc string) string { return "  " + keyw(k) + styleHelp.Render(desc) + "\n" }
-	section := func(t string) string { return "\n  " + styleSummaryH.Render(t) + "\n" }
-
-	var b strings.Builder
-	b.WriteString(m.renderHeader("Help"))
-	b.WriteString(section("Navigation"))
-	b.WriteString(row("j / ↓", "move down"))
-	b.WriteString(row("k / ↑", "move up"))
-	b.WriteString(row("g / G", "jump to top / bottom"))
-	b.WriteString(row("pgdn/pgup", "page down / up"))
-	b.WriteString(row("tab", "next month"))
-	b.WriteString(row("shift+tab", "previous month"))
-	b.WriteString(row("y / Y", "jump to next / previous year (skips to where data exists)"))
-	b.WriteString(section("Entries"))
-	b.WriteString(row("enter", "view full details (untruncated description, source, raw row)"))
-	b.WriteString(row("n", "new entry (manual income/expense)"))
-	b.WriteString(row("i", "import CSV (N26, ING, DKB, generic) — t at preview: tag account"))
-	b.WriteString(row("e", "edit selected entry"))
-	b.WriteString(row("d", "delete entry (asks to confirm)"))
-	b.WriteString(row("c", "set category for selected entry"))
-	b.WriteString(section("Data"))
-	b.WriteString(row("/", "search transactions (esc clears)"))
-	b.WriteString(row("f", "filter by category — fuzzy-searchable popup (esc clears)"))
-	b.WriteString(row("s", "summary — categories, charts, budget goals"))
-	b.WriteString(section("Accounts"))
-	b.WriteString("  " + styleHelp.Render("No separate \"create account\" step — an account is just a text tag") + "\n")
-	b.WriteString("  " + styleHelp.Render("on transactions. It appears the first time you tag something with it:") + "\n")
-	b.WriteString("  " + styleHelp.Render("  · CLI:  budgetctl import file.csv --account \"Sparkasse\"") + "\n")
-	b.WriteString("  " + styleHelp.Render("  · TUI:  i → pick file → t (at preview) → type a name → enter") + "\n")
-	b.WriteString("  " + styleHelp.Render("Redo a bad import: budgetctl reset --account \"Sparkasse\" (asks to confirm)") + "\n")
-	b.WriteString(row("[ / ]", "cycle accounts (tab/click also works)"))
-	b.WriteString(section("Other"))
-	b.WriteString(row("o", "settings — sync your data across devices (iCloud Drive, Dropbox, …)"))
-	b.WriteString(row("?", "toggle this help"))
-	b.WriteString(row("q", "quit"))
-	b.WriteString("\n" + styleHelp.Render("  Import & categorize on the CLI: budgetctl import file.csv · budgetctl tag PATTERN --category NAME") + "\n")
-	return b.String()
+	body := keymap.Bare().
+		Section("Navigation").
+		Row("j / ↓", "move down").
+		Row("k / ↑", "move up").
+		Row("g / G", "jump to top / bottom").
+		Row("pgdn/up", "page down / up").
+		Row("tab", "next month").
+		Row("s-tab", "previous month").
+		Row("y / Y", "jump to next / previous year (skips to where data exists)").
+		Section("Entries").
+		Row("enter", "view full details (untruncated description, source, raw row)").
+		Row("n", "new entry (manual income/expense)").
+		Row("i", "import CSV (N26, ING, DKB, generic) — t at preview: tag account").
+		Row("e", "edit selected entry").
+		Row("d", "delete entry (asks to confirm)").
+		Row("c", "set category for selected entry").
+		Section("Data").
+		Row("/", "search transactions (esc clears)").
+		Row("f", "filter by category — fuzzy-searchable popup (esc clears)").
+		Row("s", "summary — categories, charts, budget goals").
+		Section("Accounts").
+		Text("No separate \"create account\" step — an account is just a text tag").
+		Text("on transactions. It appears the first time you tag something with it:").
+		Text("  · CLI:  budgetctl import file.csv --account \"Sparkasse\"").
+		Text("  · TUI:  i → pick file → t (at preview) → type a name → enter").
+		Text("Redo a bad import: budgetctl reset --account \"Sparkasse\" (asks to confirm)").
+		Row("[ / ]", "cycle accounts (tab/click also works)").
+		Section("Other").
+		Row("o", "settings — sync your data across devices (iCloud Drive, Dropbox, …)").
+		Row("?", "toggle this help").
+		Row("q", "quit").
+		Text("").
+		Text("Import & categorize on the CLI: budgetctl import file.csv · budgetctl tag PATTERN --category NAME").
+		String()
+	return m.renderHeader("Help") + body
 }
 
 // openHelp sizes and populates the transient help popup (see
