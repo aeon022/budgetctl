@@ -2,6 +2,8 @@ github.com/aeon022/missionctl-core v0.0.0-20260802150042-e2881ef3fdcf h1:qWoXbKw
 github.com/aeon022/missionctl-core v0.0.0-20260802150042-e2881ef3fdcf/go.mod h1:RWHy562XcOs9idgzJRMUOmuYjjRyo6KUSl10bS0AZ5M=
 github.com/aeon022/missionctl-core v0.0.0-20260803151316-e3544361775c h1:spjJA2s7uj5KfCvT5ogEDsOxsIkWzdttLhI6HXraA0I=
 github.com/aeon022/missionctl-core v0.0.0-20260803151316-e3544361775c/go.mod h1:RWHy562XcOs9idgzJRMUOmuYjjRyo6KUSl10bS0AZ5M=
+github.com/aeon022/missionctl-core v0.0.0-20260803153211-6cf4fcc352f5 h1:MAgPwKMbRKoxRIJdJRxlLsFYiz2OtBoyUsSEcu9veXU=
+github.com/aeon022/missionctl-core v0.0.0-20260803153211-6cf4fcc352f5/go.mod h1:RWHy562XcOs9idgzJRMUOmuYjjRyo6KUSl10bS0AZ5M=
 github.com/anthropics/anthropic-sdk-go v1.57.0 h1:iEAcPbUKfJ2Iqz9uN/jEndCNW2+x7OYLHDidXDhPjI0=
 github.com/anthropics/anthropic-sdk-go v1.57.0/go.mod h1:3EfIfmFqxH6rbiLcIP4tPFyXL/IHakx2wDG4OU+TIEI=
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=

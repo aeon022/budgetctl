@@ -16,6 +16,7 @@ import (
 	"github.com/aeon022/budgetctl/internal/store"
 	"github.com/aeon022/missionctl-core/keymap"
 	"github.com/aeon022/missionctl-core/overlay"
+	"github.com/aeon022/missionctl-core/palette"
 	"github.com/aeon022/missionctl-core/theme"
 	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -162,6 +163,11 @@ type Model struct {
 	searchInput   textinput.Model
 	vp            viewport.Model
 
+	// ":" command palette
+	inPalette     bool
+	paletteInput  textinput.Model
+	paletteCursor int
+
 	// category filter ("f" opens a popup picker, viewCategoryPick)
 	categories         []string // distinct categories in use, alphabetical
 	categoryFilter     string   // active filter; "" = all categories
@@ -227,14 +233,42 @@ type Model struct {
 	err        error
 }
 
+// ── command palette (":") ────────────────────────────────────────────────────
+//
+// Types out full words instead of memorizing single-key shortcuts. Reuses
+// the exact same key handling every shortcut already goes through
+// (updateList) by replaying the mapped keypress, so behavior is guaranteed
+// identical to typing the key directly. Matching logic lives in
+// missionctl-core/palette (shared across the suite); this list is
+// budgetctl-specific.
+var paletteCommands = []palette.Command{
+	{Name: "new", Desc: "New transaction (manual income/expense)", Key: "n"},
+	{Name: "edit", Desc: "Edit selected entry", Key: "e"},
+	{Name: "delete", Desc: "Delete entry (asks to confirm)", Key: "d"},
+	{Name: "detail", Desc: "View full details", Key: "enter"},
+	{Name: "import", Desc: "Import CSV (N26, ING, DKB, generic)", Key: "i"},
+	{Name: "category", Desc: "Set category for selected entry", Key: "c"},
+	{Name: "undo", Desc: "Undo last delete", Key: "u"},
+	{Name: "select", Desc: "Select mode (batch categorize)", Key: "v"},
+	{Name: "search", Desc: "Search transactions", Key: "/"},
+	{Name: "filter", Desc: "Filter by category", Key: "f"},
+	{Name: "summary", Desc: "Summary — categories, charts, budget goals", Key: "s"},
+	{Name: "settings", Desc: "Settings — sync across devices", Key: "o"},
+	{Name: "help", Desc: "Show help", Key: "?"},
+	{Name: "quit", Desc: "Quit budgetctl", Key: "q"},
+}
+
 func New() Model {
 	si := textinput.New()
 	si.Placeholder = "search transactions…"
 	si.CharLimit = 100
+	pi := textinput.New()
+	pi.Placeholder = "command…"
+	pi.CharLimit = 40
 	ci := textinput.New()
 	ci.Placeholder = "category…"
 	ci.CharLimit = 60
-	return Model{searchInput: si, catInput: ci, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
+	return Model{searchInput: si, paletteInput: pi, catInput: ci, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
 }
 
 func newForm(t *models.Transaction) [fCount]textinput.Model {
@@ -1140,6 +1174,52 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.inPalette {
+		closePalette := func(mm Model) Model {
+			mm.inPalette = false
+			mm.paletteInput.Blur()
+			mm.paletteInput.SetValue("")
+			mm.paletteCursor = 0
+			return mm
+		}
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			return closePalette(m), nil
+		case "up", "ctrl+p":
+			if m.paletteCursor > 0 {
+				m.paletteCursor--
+			}
+			return m, nil
+		case "down", "ctrl+n":
+			matches := palette.Match(paletteCommands, m.paletteInput.Value())
+			if m.paletteCursor < len(matches)-1 {
+				m.paletteCursor++
+			}
+			return m, nil
+		case "enter":
+			matches := palette.Match(paletteCommands, m.paletteInput.Value())
+			if len(matches) == 0 {
+				return closePalette(m), nil
+			}
+			if m.paletteCursor >= len(matches) {
+				m.paletteCursor = len(matches) - 1
+			}
+			chosen := matches[m.paletteCursor]
+			m = closePalette(m)
+			replay := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(chosen.Key)}
+			if chosen.Key == "enter" {
+				replay = tea.KeyMsg{Type: tea.KeyEnter}
+			}
+			return m.updateList(replay)
+		}
+		var cmd tea.Cmd
+		m.paletteInput, cmd = m.paletteInput.Update(msg)
+		m.paletteCursor = 0
+		return m, cmd
+	}
+
 	if m.searching {
 		switch msg.String() {
 		case "enter":
@@ -1247,6 +1327,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetValue("")
 		m.searchTxs = m.allTxs // placeholder so the list isn't empty while the all-months fetch is in flight
 		return m, loadSearchCmd(m.activeAccountName(), m.categoryFilter)
+	case ":":
+		m.inPalette = true
+		m.paletteCursor = 0
+		m.paletteInput.SetValue("")
+		return m, m.paletteInput.Focus()
 	case "?":
 		m = m.openHelp()
 	case "n":
@@ -1777,6 +1862,9 @@ func (m Model) listStartRow() int {
 	if m.searching {
 		row += 2
 	}
+	if m.inPalette {
+		row += 8
+	}
 	if m.searchQ != "" {
 		row++
 	}
@@ -1980,6 +2068,25 @@ func (m Model) renderList() string {
 	if m.searching {
 		b.WriteString("  " + m.searchInput.View() + "\n\n")
 	}
+	if m.inPalette {
+		b.WriteString("  " + m.paletteInput.View() + "\n")
+		matches := palette.Match(paletteCommands, m.paletteInput.Value())
+		if len(matches) > 6 {
+			matches = matches[:6]
+		}
+		if len(matches) == 0 {
+			b.WriteString("    " + styleHelp.Render("no matching command") + "\n")
+		}
+		for i, c := range matches {
+			row := fmt.Sprintf("%-9s %s", c.Name, c.Desc)
+			if i == m.paletteCursor {
+				b.WriteString("    " + styleSelected.Render("▶ "+row) + "\n")
+			} else {
+				b.WriteString("      " + styleHelp.Render(row) + "\n")
+			}
+		}
+		b.WriteString("\n")
+	}
 	if m.searchQ != "" {
 		b.WriteString(styleMuted.Render("  /"+m.searchQ) + "\n")
 	}
@@ -2120,6 +2227,7 @@ func (m Model) helpContent() string {
 		Row("c", "set category for selected entry").
 		Section("Data").
 		Row("/", "search transactions (esc clears)").
+		Row(":", "command palette — type an action by name").
 		Row("f", "filter by category — fuzzy-searchable popup (esc clears)").
 		Row("s", "summary — categories, charts, budget goals").
 		Section("Accounts").

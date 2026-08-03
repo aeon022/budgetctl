@@ -13,6 +13,7 @@ import (
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
+	"github.com/aeon022/missionctl-core/palette"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -193,6 +194,48 @@ func TestDeleteConfirmCancel(t *testing.T) {
 	m = feed(t, m, loadCmd("", "", ""))
 	if len(m.txs) != 0 {
 		t.Fatalf("entry not deleted: %+v", m.txs)
+	}
+}
+
+func TestCommandPalette_TypeFilterAndExecute(t *testing.T) {
+	m := New()
+	m.width, m.height = 100, 30
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	m = mi.(Model)
+	if !m.inPalette {
+		t.Fatal("expected inPalette after ':'")
+	}
+
+	for _, r := range "sum" {
+		mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = mi.(Model)
+	}
+	matches := palette.Match(paletteCommands, m.paletteInput.Value())
+	if len(matches) == 0 || matches[0].Name != "summary" {
+		t.Fatalf("expected 'summary' to be the top match for query %q, got %v", m.paletteInput.Value(), matches)
+	}
+
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+	if m.inPalette {
+		t.Error("expected palette to close after executing a command")
+	}
+	if m.view != viewSummary {
+		t.Errorf("expected 'summary' command to replay 's' and open viewSummary, got %v", m.view)
+	}
+}
+
+func TestCommandPalette_EscCloses(t *testing.T) {
+	m := New()
+	m.width, m.height = 100, 30
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	m = mi.(Model)
+
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mi.(Model)
+	if m.inPalette {
+		t.Error("expected esc to close the palette")
 	}
 }
 
