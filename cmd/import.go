@@ -19,6 +19,13 @@ var importCmd = &cobra.Command{
 		account, _ := cmd.Flags().GetString("account")
 		useAI, _ := cmd.Flags().GetBool("ai")
 
+		if useAI && !config.IsPro() {
+			fmt.Println("AI categorization is a missionctl Bundle feature.")
+			fmt.Println("Get it at https://missionctl.sh/#pricing, then: budgetctl license activate <key>")
+			fmt.Println("Importing without AI categorization...")
+			useAI = false
+		}
+
 		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err

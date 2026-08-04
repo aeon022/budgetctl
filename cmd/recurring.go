@@ -12,8 +12,14 @@ import (
 
 var recurringCmd = &cobra.Command{
 	Use:   "recurring",
-	Short: "Detect recurring payments (subscriptions, rent, utilities)",
+	Short: "Detect recurring payments (subscriptions, rent, utilities) — missionctl Bundle feature",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !config.IsPro() {
+			fmt.Println("Recurring-payment detection is a missionctl Bundle feature.")
+			fmt.Println("Get it at https://missionctl.sh/#pricing, then: budgetctl license activate <key>")
+			return nil
+		}
+
 		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
 			return err

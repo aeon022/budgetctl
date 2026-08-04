@@ -62,6 +62,47 @@ func SetDataDir(dir string) error {
 	return viper.WriteConfigAs(filepath.Join(cfgDir, "budgetctl.yaml"))
 }
 
+// defaultPolarOrgID is aeon022's Polar.sh organization — shared across the
+// missionctl suite, same as postctl's.
+const defaultPolarOrgID = "aa792ea4-650e-492e-a955-9b3d564e943e"
+
+// IsPro reports whether a valid Pro/Bundle license is active on this
+// machine — gates AI categorization and recurring-payment detection.
+func IsPro() bool {
+	return viper.GetString("license_status") == "active"
+}
+
+func LicenseKey() string {
+	return viper.GetString("license_key")
+}
+
+func LicenseStatus() string {
+	return viper.GetString("license_status")
+}
+
+func PolarOrgID() string {
+	if v := viper.GetString("polar_org_id"); v != "" {
+		return v
+	}
+	return defaultPolarOrgID
+}
+
+// SetLicense persists the license key/status to
+// ~/.config/budgetctl/budgetctl.yaml.
+func SetLicense(key, status string) error {
+	viper.Set("license_key", key)
+	viper.Set("license_status", status)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	cfgDir := filepath.Join(home, ".config", "budgetctl")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		return err
+	}
+	return viper.WriteConfigAs(filepath.Join(cfgDir, "budgetctl.yaml"))
+}
+
 func expandHome(p string) string {
 	if len(p) >= 2 && p[:2] == "~/" {
 		home, _ := os.UserHomeDir()

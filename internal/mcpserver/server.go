@@ -410,6 +410,10 @@ func toolDetectRecurring() mcp.Tool {
 }
 
 func handleDetectRecurring(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if !config.IsPro() {
+		return mcp.NewToolResultText("Recurring-payment detection is a missionctl Bundle feature. Get it at https://missionctl.sh/#pricing, then: budgetctl license activate <key>"), nil
+	}
+
 	s, err := store.New(config.DBPath(), config.Shared())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
