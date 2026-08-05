@@ -71,8 +71,8 @@ func SetDataDir(dir string) error {
 // filled in once the individual product is created and its benefit ID is
 // known.
 const (
-	bundleBenefitID    = ""
-	budgetctlBenefitID = ""
+	bundleBenefitID    = "de1be860-1dfc-43da-99a8-206fb2573f09"
+	budgetctlBenefitID = "d296301d-461e-4799-bf2e-a6ff0f7c44cd"
 )
 
 // IsPro reports whether a valid Pro/Bundle or budgetctl-only license is
