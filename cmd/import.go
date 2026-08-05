@@ -48,5 +48,5 @@ var importCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(importCmd)
 	importCmd.Flags().StringP("account", "a", "", "Tag every imported transaction with this account name (creates it — accounts have no separate setup step)")
-	importCmd.Flags().Bool("ai", false, "Use Claude to categorize uncategorized transactions")
+	importCmd.Flags().Bool("ai", false, "Use AI (Anthropic/OpenAI/Gemini/local Ollama) to categorize uncategorized transactions")
 }

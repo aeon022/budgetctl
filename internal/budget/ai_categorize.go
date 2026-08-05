@@ -6,12 +6,18 @@ import (
 	"fmt"
 	"strings"
 
-	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/aeon022/budgetctl/internal/models"
+	coreai "github.com/aeon022/missionctl-core/ai"
 )
 
-// AICategories sends uncategorized transactions to Claude Haiku and returns
-// a map of description → category. Existing category names are passed as hints.
+const categorizeSystemPrompt = `You are a personal finance categorizer. Assign each transaction description a short category name (e.g. "Groceries", "Transport", "Restaurants", "Subscriptions", "Rent", "Health", "Shopping", "Entertainment").
+
+Return ONLY a JSON object mapping each description exactly to its category. No markdown, no explanation.`
+
+// AICategories sends uncategorized transactions to the configured AI
+// provider (Anthropic/OpenAI/Gemini/local Ollama — see
+// missionctl-core/ai) and returns a map of description → category.
+// Existing category names are passed as hints.
 func AICategories(ctx context.Context, txs []models.Transaction, existingCategories []string) (map[string]string, error) {
 	if len(txs) == 0 {
 		return nil, nil
@@ -25,40 +31,23 @@ func AICategories(ctx context.Context, txs []models.Transaction, existingCategor
 	catsHint := ""
 	if len(existingCategories) > 0 {
 		catsHint = fmt.Sprintf(
-			"\nPrefer these known categories where they fit (create new ones if needed): %s.",
+			"Prefer these known categories where they fit (create new ones if needed): %s.\n\n",
 			strings.Join(existingCategories, ", "),
 		)
 	}
+	prompt := fmt.Sprintf("%sTransactions:\n%s", catsHint, strings.Join(descLines, "\n"))
 
-	prompt := fmt.Sprintf(`You are a personal finance categorizer. Assign each transaction description below a short category name (e.g. "Groceries", "Transport", "Restaurants", "Subscriptions", "Rent", "Health", "Shopping", "Entertainment").%s
-
-Return ONLY a JSON object mapping each description exactly to its category. No markdown, no explanation.
-
-Transactions:
-%s`, catsHint, strings.Join(descLines, "\n"))
-
-	client := anthropic.NewClient()
-
-	response, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeHaiku4_5,
-		MaxTokens: 1024,
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-		},
-	})
+	info, err := coreai.Detect("BUDGETCTL")
 	if err != nil {
-		return nil, fmt.Errorf("claude api: %w", err)
+		return nil, err
 	}
 
-	var text string
-	for _, block := range response.Content {
-		switch v := block.AsAny().(type) {
-		case anthropic.TextBlock:
-			text = v.Text
-		}
+	text, err := coreai.Call(ctx, info, categorizeSystemPrompt, prompt, nil)
+	if err != nil {
+		return nil, err
 	}
 
-	// Strip any surrounding markdown code fence Claude might add
+	// Strip any surrounding markdown code fence the model might add
 	text = strings.TrimSpace(text)
 	if start := strings.Index(text, "{"); start >= 0 {
 		if end := strings.LastIndex(text, "}"); end > start {
@@ -68,7 +57,7 @@ Transactions:
 
 	var result map[string]string
 	if err := json.Unmarshal([]byte(text), &result); err != nil {
-		return nil, fmt.Errorf("parse claude response: %w (raw: %s)", err, text)
+		return nil, fmt.Errorf("parse AI response: %w (raw: %s)", err, text)
 	}
 
 	return result, nil

@@ -839,7 +839,8 @@ func (m Model) openImport() Model {
 	m.importPath = ""
 	m.importParsed = nil
 	m.importErr = nil
-	m.importUseAI = os.Getenv("ANTHROPIC_API_KEY") != ""
+	m.importUseAI = os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" ||
+		os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("BUDGETCTL_PROVIDER") != ""
 	m.importAcctInput = ai
 	m.importEditingAcct = false
 	m.view = viewImport

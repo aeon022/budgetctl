@@ -17,7 +17,7 @@ type ImportResult struct {
 }
 
 // ImportFile parses path, upserts every row into s (auto-categorizing via
-// existing rules), and optionally asks Claude to categorize whatever's
+// existing rules), and optionally asks the configured AI provider to categorize whatever's
 // still uncategorized afterward. Shared by the CLI `import` command and the
 // TUI import assistant so both go through the exact same store/categorize
 // logic instead of two copies drifting apart.
