@@ -3,7 +3,7 @@ module github.com/aeon022/budgetctl
 go 1.26.5
 
 require (
-	github.com/aeon022/missionctl-core v0.0.0-20260805130408-332d3f233c7e
+	github.com/aeon022/missionctl-core v0.0.0-20260805141405-10c5f5590599
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
