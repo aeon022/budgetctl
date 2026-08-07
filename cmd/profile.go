@@ -85,6 +85,27 @@ var profileUseCmd = &cobra.Command{
 	},
 }
 
+var profileSetDataDirCmd = &cobra.Command{
+	Use:   "set-data-dir <name> <dir>",
+	Short: "Point an existing profile at a folder (e.g. to sync it via iCloud/Dropbox)",
+	Long: `Moves an existing profile's database to dir, so it can be synced across
+devices the same way the unscoped default's data_dir works — pass an empty
+string to move it back to its private, non-synced default location.
+
+If dir already has a database (e.g. another device already set this profile
+up to sync there), that one is used as-is and the current local data is left
+untouched at its old path, not merged or deleted.`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		status, err := config.MoveProfileDataDir(args[0], args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Println(status)
+		return nil
+	},
+}
+
 var profileRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
 	Short: "Forget a profile (does not delete its database)",
@@ -103,6 +124,7 @@ func init() {
 	profileCmd.AddCommand(profileAddCmd)
 	profileCmd.AddCommand(profileListCmd)
 	profileCmd.AddCommand(profileUseCmd)
+	profileCmd.AddCommand(profileSetDataDirCmd)
 	profileCmd.AddCommand(profileRemoveCmd)
 	profileAddCmd.Flags().String("data-dir", "", "Optional folder to store this profile's database in (e.g. for syncing)")
 }

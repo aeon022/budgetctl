@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -137,6 +138,111 @@ func AddProfile(name, dataDir string) error {
 	}
 	viper.Set("profiles."+name+".data_dir", contractHome(dataDir))
 	return writeConfigFile()
+}
+
+// MoveProfileDataDir points an existing profile at a new directory (e.g. to
+// start syncing it via iCloud Drive/Dropbox) and, if there's an existing
+// database that needs to move to make the change actually take effect,
+// moves it — the CLI/non-interactive equivalent of the TUI's "o" settings
+// screen for the unscoped default:
+//   - refuses if newDir is already used by another profile or by the
+//     unscoped default — profiles exist to keep data apart; silently
+//     reusing another one's file would merge them instead.
+//   - if the new location already has a database, it's used as-is (the
+//     "joining a device that already set this profile up" case) — the
+//     previous local database is left untouched at its old path, not
+//     merged or deleted.
+//   - else if the old location has a database, it's moved to the new
+//     location.
+//   - else there's nothing to move (a fresh setup).
+//
+// Returns a human-readable status describing what happened. newDir == ""
+// moves the profile back to its private default subfolder.
+func MoveProfileDataDir(name, newDir string) (status string, err error) {
+	if !ProfileExists(name) {
+		return "", fmt.Errorf("no profile named %q", name)
+	}
+
+	if newDir != "" {
+		resolved, _ := coreconfig.ResolveDir("budgetctl", contractHome(newDir))
+		if defaultDir := filepath.Dir(DefaultDBPath()); resolved == defaultDir {
+			return "", fmt.Errorf("%s is already used by the default (unscoped) database — pick a different folder so profiles stay separate", resolved)
+		}
+		for _, other := range Profiles() {
+			if other == name {
+				continue
+			}
+			if otherDir, _ := ProfileDir(other); otherDir == resolved {
+				return "", fmt.Errorf("%s is already used by profile %q — pick a different folder so profiles stay separate", resolved, other)
+			}
+		}
+	}
+
+	oldDir, _ := ProfileDir(name)
+	oldPath := filepath.Join(oldDir, "budget.db")
+
+	if err := SetProfileDataDir(name, newDir); err != nil {
+		return "", err
+	}
+
+	newResolvedDir, _ := ProfileDir(name)
+	newPath := filepath.Join(newResolvedDir, "budget.db")
+	if newPath == oldPath {
+		return fmt.Sprintf("Now using %s.", newResolvedDir), nil
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return fmt.Sprintf("Found an existing database at %s — now using it (previous data untouched at %s).", newResolvedDir, oldPath), nil
+	}
+	if _, err := os.Stat(oldPath); err == nil {
+		if err := moveDBFile(oldPath, newPath); err != nil {
+			return "", fmt.Errorf("moving existing database: %w", err)
+		}
+		_ = os.Remove(oldPath + ".lock")
+		return fmt.Sprintf("Moved existing data to %s.", newResolvedDir), nil
+	}
+	return fmt.Sprintf("Now syncing new data to %s.", newResolvedDir), nil
+}
+
+// SetProfileDataDir changes an existing profile's directory override
+// without moving any existing database — MoveProfileDataDir wraps this
+// with the actual file move; call it directly only when you know there's
+// nothing to move (e.g. tests).
+func SetProfileDataDir(name, dir string) error {
+	if !ProfileExists(name) {
+		return fmt.Errorf("no profile named %q", name)
+	}
+	viper.Set("profiles."+name+".data_dir", contractHome(dir))
+	return writeConfigFile()
+}
+
+// moveDBFile renames oldPath to newPath, falling back to copy-then-remove
+// if they're on different filesystems (os.Rename returns EXDEV) — a
+// folder-synced directory (iCloud Drive, Dropbox) is usually on the same
+// volume as $HOME, but not guaranteed.
+func moveDBFile(oldPath, newPath string) error {
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(oldPath, newPath); err == nil {
+		return nil
+	}
+	src, err := os.Open(oldPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.Create(newPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	return os.Remove(oldPath)
 }
 
 // RemoveProfile forgets a profile's mapping — it does NOT delete the

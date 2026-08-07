@@ -234,3 +234,75 @@ func TestRemoveProfile(t *testing.T) {
 		t.Error("RemoveProfile(unknown) = nil error, want an error")
 	}
 }
+
+func TestMoveProfileDataDirMovesExistingData(t *testing.T) {
+	home := resetViper(t)
+	if err := AddProfile("firma", ""); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	oldDir, _ := ProfileDir("firma")
+	oldPath := filepath.Join(oldDir, "budget.db")
+	if err := os.WriteFile(oldPath, []byte("fake db"), 0o644); err != nil {
+		t.Fatalf("seeding old db: %v", err)
+	}
+
+	newDir := filepath.Join(home, "Dropbox", "budgetctl-firma")
+	status, err := MoveProfileDataDir("firma", newDir)
+	if err != nil {
+		t.Fatalf("MoveProfileDataDir: %v", err)
+	}
+	if !strings.Contains(status, "Moved existing data") {
+		t.Errorf("status = %q, want it to mention the data was moved", status)
+	}
+
+	newPath := filepath.Join(newDir, "budget.db")
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("expected db at new path %s: %v", newPath, err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Errorf("expected old db to be gone from %s, stat err = %v", oldPath, err)
+	}
+	if dir, shared := ProfileDir("firma"); dir != newDir || !shared {
+		t.Errorf("ProfileDir(firma) = (%q, %v), want (%q, true)", dir, shared, newDir)
+	}
+}
+
+func TestMoveProfileDataDirRejectsDefaultCollision(t *testing.T) {
+	home := resetViper(t)
+	if err := AddProfile("firma", ""); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	defaultDir := filepath.Join(home, ".local", "share", "budgetctl")
+	if _, err := MoveProfileDataDir("firma", defaultDir); err == nil {
+		t.Error("MoveProfileDataDir onto the default's own dir = nil error, want an error")
+	}
+}
+
+func TestMoveProfileDataDirRejectsOtherProfileCollision(t *testing.T) {
+	home := resetViper(t)
+	shared := filepath.Join(home, "Dropbox", "budgetctl-shared")
+	if err := AddProfile("firma", shared); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if err := AddProfile("privat", ""); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if _, err := MoveProfileDataDir("privat", shared); err == nil {
+		t.Error("MoveProfileDataDir onto another profile's dir = nil error, want an error")
+	}
+}
+
+func TestMoveProfileDataDirNoExistingData(t *testing.T) {
+	home := resetViper(t)
+	if err := AddProfile("firma", ""); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	newDir := filepath.Join(home, "Dropbox", "budgetctl-firma")
+	status, err := MoveProfileDataDir("firma", newDir)
+	if err != nil {
+		t.Fatalf("MoveProfileDataDir: %v", err)
+	}
+	if !strings.Contains(status, "Now syncing new data") {
+		t.Errorf("status = %q, want it to mention there was nothing to move", status)
+	}
+}

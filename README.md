@@ -181,7 +181,12 @@ budgetctl profile use firma          # everything (CLI, TUI, MCP) now scopes to 
 budgetctl profile list               # shows every profile, marks the active one
 budgetctl profile use default        # back to the unscoped default database
 budgetctl profile remove firma       # forgets the profile; its database is left on disk
+budgetctl profile set-data-dir firma ~/Dropbox/budgetctl-firma   # sync an existing profile; "" moves it back to local
 ```
+
+`set-data-dir` refuses a folder that's already used by another profile or the
+unscoped default — profiles exist to keep data apart, so pick each one a
+distinct folder if you sync more than one.
 
 In the TUI, press `p` to switch, create, or remove profiles the same way.
 
