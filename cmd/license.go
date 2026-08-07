@@ -35,6 +35,11 @@ var licenseActivateCmd = &cobra.Command{
 				_ = config.SetLicense(key, "offline_pending", "")
 				os.Exit(0)
 			}
+			if result.Status == "" {
+				fmt.Printf("✗ Activation failed: %v\n", err)
+				fmt.Println("  Not saved — this looks temporary, try again shortly.")
+				os.Exit(1)
+			}
 			fmt.Printf("✗ Activation failed: %v\n", err)
 			_ = config.SetLicense(key, "invalid", "")
 			os.Exit(1)
@@ -57,6 +62,12 @@ var licenseStatusCmd = &cobra.Command{
 			fmt.Println("License Type: CORE (free)")
 			fmt.Println("Status: No license registered. Get the Bundle at https://missionctl.sh/#pricing")
 			fmt.Println("Then run: budgetctl license activate <key>")
+			return
+		}
+		if strings.HasPrefix(key, "MCTL-DEV-") {
+			fmt.Println("License Type: PRO (Local Dev/Family Override)")
+			fmt.Printf("License Key:  %s\n", licensing.MaskKey(key))
+			fmt.Println("Status:       ACTIVE (local override, not registered with Polar)")
 			return
 		}
 
