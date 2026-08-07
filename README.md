@@ -60,6 +60,9 @@ budgetctl goal list [--month 2026-07]                Show goal progress
 budgetctl goal delete CATEGORY                       Remove a goal
 budgetctl recurring                                  Detect recurring payments
 budgetctl export [--year 2026] [--format csv|json] [-o FILE]
+budgetctl profile add NAME [--data-dir DIR]          Create an isolated profile
+budgetctl profile use NAME                           Switch active profile ("default" clears it)
+budgetctl profile list                               List profiles
 budgetctl mcp                                        Start MCP server (stdio)
 ```
 
@@ -162,6 +165,27 @@ By default budgetctl's database lives at `~/.local/share/budgetctl/budget.db`, l
 Once set, budgetctl automatically switches its SQLite journal mode from WAL to rollback-journal — WAL splits the database across multiple files that a folder-sync client can't update atomically together, so this switch keeps the directory down to a single consistent file whenever budgetctl isn't actively writing. A same-machine lock also prevents two budgetctl processes from opening the database at once (run `budgetctl doctor` to see the current mode and path).
 
 This only protects against the same-machine and stale-snapshot failure modes — it does not resolve two different machines editing at the exact same instant. If iCloud Drive shows a file as "not downloaded yet" (Optimize Mac Storage), budgetctl reports that explicitly instead of a bare error.
+
+---
+
+## Profiles
+
+Keep separate contexts — e.g. a "firma" (business) account and your personal
+accounts — in fully separate databases, so transactions, categories, and
+budget goals in one never show up in the other:
+
+```bash
+budgetctl profile add firma          # local by default; add --data-dir to sync it too
+budgetctl profile use firma          # everything (CLI, TUI, MCP) now scopes to firma
+budgetctl profile list               # shows every profile, marks the active one
+budgetctl profile use default        # back to the unscoped default database
+budgetctl profile remove firma       # forgets the profile; its database is left on disk
+```
+
+In the TUI, press `p` to switch, create, or remove profiles the same way.
+
+With no active profile, budgetctl behaves exactly as before — a single
+unscoped database, optionally synced via `data_dir` as described above.
 
 ---
 

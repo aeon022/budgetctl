@@ -40,6 +40,7 @@ const (
 	viewDetail       view = iota
 	viewCategoryPick view = iota
 	viewSettings     view = iota
+	viewProfiles     view = iota
 )
 
 // ── Import assistant steps ──────────────────────────────────────────────────
@@ -228,6 +229,17 @@ type Model struct {
 	settingsOldPath    string // config.DBPath() before the change, for the move
 	settingsErr        error
 
+	// Profiles ("p") — switch between isolated data profiles (see
+	// internal/config's Profiles/ActiveProfile/SetActiveProfile). Each
+	// profile is its own database, so this screen is just a picker over
+	// config.Profiles() plus "default"; it doesn't cache any profile data
+	// itself.
+	profilesCursor  int
+	profileCreating bool
+	profileNewInput textinput.Model
+	profileRemoving string // profile name pending removal confirmation, "" = none
+	profileErr      error
+
 	status     string
 	statusTime time.Time
 	err        error
@@ -254,6 +266,7 @@ var paletteCommands = []palette.Command{
 	{Name: "filter", Desc: "Filter by category", Key: "f"},
 	{Name: "summary", Desc: "Summary — categories, charts, budget goals", Key: "s"},
 	{Name: "settings", Desc: "Settings — sync across devices", Key: "o"},
+	{Name: "profiles", Desc: "Switch or manage isolated data profiles", Key: "p"},
 	{Name: "help", Desc: "Show help", Key: "?"},
 	{Name: "quit", Desc: "Quit budgetctl", Key: "q"},
 }
@@ -581,6 +594,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCategoryPick(msg)
 		case viewSettings:
 			return m.updateSettings(msg)
+		case viewProfiles:
+			return m.updateProfiles(msg)
 		}
 	}
 
@@ -1089,6 +1104,214 @@ func moveFile(oldPath, newPath string) error {
 	return os.Remove(oldPath)
 }
 
+// profileDisplayNames returns "default" plus every configured profile, in
+// the order the "p" screen lists them.
+func profileDisplayNames() []string {
+	return append([]string{"default"}, config.Profiles()...)
+}
+
+// openProfiles opens the "p" profiles screen, with the cursor starting on
+// whichever profile is currently active.
+func (m Model) openProfiles() Model {
+	m.view = viewProfiles
+	m.profileCreating = false
+	m.profileRemoving = ""
+	m.profileErr = nil
+	active := config.ActiveProfile()
+	m.profilesCursor = 0
+	for i, name := range profileDisplayNames() {
+		if name == active || (name == "default" && active == "") {
+			m.profilesCursor = i
+			break
+		}
+	}
+	return m
+}
+
+func (m Model) updateProfiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.profileCreating {
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			m.profileCreating = false
+			m.profileNewInput.Blur()
+			return m, nil
+		case "enter":
+			name := strings.TrimSpace(m.profileNewInput.Value())
+			m.profileCreating = false
+			m.profileNewInput.Blur()
+			if name == "" {
+				return m, nil
+			}
+			if err := config.AddProfile(name, ""); err != nil {
+				m.profileErr = err
+				return m, nil
+			}
+			m.profileErr = nil
+			for i, n := range profileDisplayNames() {
+				if n == name {
+					m.profilesCursor = i
+				}
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.profileNewInput, cmd = m.profileNewInput.Update(msg)
+		return m, cmd
+	}
+
+	if m.profileRemoving != "" {
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "y", "Y":
+			name := m.profileRemoving
+			m.profileRemoving = ""
+			if err := config.RemoveProfile(name); err != nil {
+				m.profileErr = err
+				return m, nil
+			}
+			m.profileErr = nil
+			m.profilesCursor = 0
+		default:
+			m.profileRemoving = ""
+		}
+		return m, nil
+	}
+
+	names := profileDisplayNames()
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.view = viewList
+		return m, nil
+	case "j", "down":
+		if m.profilesCursor < len(names)-1 {
+			m.profilesCursor++
+		}
+	case "k", "up":
+		if m.profilesCursor > 0 {
+			m.profilesCursor--
+		}
+	case "n":
+		ni := textinput.New()
+		ni.Placeholder = "profile name…"
+		ni.CharLimit = 40
+		m.profileNewInput = ni
+		m.profileCreating = true
+		m.profileErr = nil
+		return m, m.profileNewInput.Focus()
+	case "d":
+		if m.profilesCursor >= 0 && m.profilesCursor < len(names) && names[m.profilesCursor] != "default" {
+			m.profileRemoving = names[m.profilesCursor]
+		}
+	case "enter":
+		if m.profilesCursor < 0 || m.profilesCursor >= len(names) {
+			return m, nil
+		}
+		name := names[m.profilesCursor]
+		if name == "default" {
+			name = ""
+		}
+		if name == config.ActiveProfile() {
+			m.view = viewList
+			return m, nil
+		}
+		if err := config.SetActiveProfile(name); err != nil {
+			m.profileErr = err
+			return m, nil
+		}
+		m.profileErr = nil
+		m.view = viewList
+		// The previous profile's months/accounts/filters don't apply to
+		// whatever's in the new one — start from a clean slate and let the
+		// reload repopulate them.
+		m.activeAccount = -1
+		m.activeTab = 0
+		m.months = nil
+		m.accounts = nil
+		m.cursor = 0
+		m.searchQ = ""
+		m.categoryFilter = ""
+		if name == "" {
+			m.setStatus("Switched to the default database.")
+		} else {
+			m.setStatus(fmt.Sprintf("Switched to profile %q.", name))
+		}
+		return m, loadCmd("", "", "")
+	}
+	return m, nil
+}
+
+// renderProfilesPopup renders the "p" profiles screen: default + configured
+// profiles with the active one marked, or an inline create/remove prompt.
+// Same bordered-popup style and row-highlighting approach (padRunes +
+// truncRunes, one styleSelected.Render call per row) as
+// renderCategoryPickPopup.
+func (m Model) renderProfilesPopup() string {
+	w := m.importPopupWidth()
+	contentW := w - 6
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Profiles") + "\n\n")
+
+	if m.profileRemoving != "" {
+		b.WriteString(styleErr.Render(fmt.Sprintf("Forget profile %q? (its database stays on disk)", m.profileRemoving)) + "\n\n")
+		b.WriteString(styleMuted.Render("y: confirm  ·  any other key: cancel"))
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBlue).
+			Padding(1, 2).
+			Width(w).
+			Render(b.String())
+	}
+
+	if m.profileCreating {
+		b.WriteString(styleHelp.Render("New profile name:") + "\n  " + m.profileNewInput.View() + "\n\n")
+		if m.profileErr != nil {
+			b.WriteString(styleErr.Render("✗ "+m.profileErr.Error()) + "\n\n")
+		}
+		b.WriteString(styleMuted.Render("enter: create  ·  esc: cancel"))
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBlue).
+			Padding(1, 2).
+			Width(w).
+			Render(b.String())
+	}
+
+	b.WriteString(styleMuted.Render("Each profile is a fully separate database.") + "\n\n")
+
+	active := config.ActiveProfile()
+	itemW := contentW - 2
+	for i, name := range profileDisplayNames() {
+		label := name
+		if name == active || (name == "default" && active == "") {
+			label += "  (active)"
+		}
+		if i == m.profilesCursor {
+			b.WriteString("> " + styleSelected.Render(padRunes(truncRunes(label, itemW), itemW)) + "\n")
+			continue
+		}
+		b.WriteString("  " + truncRunes(label, itemW) + "\n")
+	}
+
+	if m.profileErr != nil {
+		b.WriteString("\n" + styleErr.Render("✗ "+m.profileErr.Error()) + "\n")
+	}
+
+	b.WriteString("\n" + styleMuted.Render("↑/↓ navigate  ·  enter: switch  ·  n: new  ·  d: remove  ·  esc: close"))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Width(w).
+		Render(b.String())
+}
+
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// delete confirmation (status-bar prompt)
 	if m.deleteTarget != nil {
@@ -1350,6 +1573,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		m = m.openSettings()
 		return m, nil
+	case "p":
+		m = m.openProfiles()
+		return m, nil
 	case "enter":
 		if len(m.txs) > 0 {
 			t := m.txs[m.cursor]
@@ -1601,6 +1827,8 @@ func (m Model) View() string {
 		return overlay.Center(m.renderList(), m.renderCategoryPickPopup(), m.width, m.height, 0)
 	case viewSettings:
 		return overlay.Center(m.renderList(), m.renderSettingsPopup(), m.width, m.height, 0)
+	case viewProfiles:
+		return overlay.Center(m.renderList(), m.renderProfilesPopup(), m.width, m.height, 0)
 	default:
 		return m.renderList()
 	}
@@ -2240,6 +2468,7 @@ func (m Model) helpContent() string {
 		Row("[ / ]", "cycle accounts (tab/click also works)").
 		Section("Other").
 		Row("o", "settings — sync your data across devices (iCloud Drive, Dropbox, …)").
+		Row("p", "profiles — fully separate databases (e.g. \"firma\" vs personal accounts)").
 		Row("?", "toggle this help").
 		Row("q", "quit").
 		Text("").

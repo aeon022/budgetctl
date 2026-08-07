@@ -1,8 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	coreconfig "github.com/aeon022/missionctl-core/config"
 	"github.com/aeon022/missionctl-core/licensing"
@@ -19,12 +22,17 @@ func Init() {
 	_ = viper.ReadInConfig()
 }
 
-// DBPath returns the database file path: db_path (legacy, a full file path)
-// if set, else data_dir/budget.db, where data_dir is resolved via
+// DBPath returns the database file path: if a profile is active, its own
+// directory (see ProfileDir); else db_path (legacy, a full file path) if
+// set, else data_dir/budget.db, where data_dir is resolved via
 // coreconfig.ResolveDir — a user-configured directory (e.g. inside iCloud
 // Drive/Dropbox) if the data_dir key is set, else the tool's private
 // default. data_dir takes precedence if both are set.
 func DBPath() string {
+	if name := ActiveProfile(); name != "" {
+		dir, _ := ProfileDir(name)
+		return filepath.Join(dir, "budget.db")
+	}
 	if dir := viper.GetString("data_dir"); dir != "" {
 		resolved, _ := coreconfig.ResolveDir("budgetctl", dir)
 		return filepath.Join(resolved, "budget.db")
@@ -37,12 +45,17 @@ func DBPath() string {
 }
 
 // Shared reports whether DBPath currently resolves to a user-configured
-// directory (data_dir) rather than the tool's private default — used to
-// decide SQLite journal mode and whether to treat the path as possibly
-// folder-synced. The legacy db_path key is a full file path, not a
-// directory, so it isn't treated as "shared" here even though it's also a
-// user override; data_dir is the supported way to opt into sync safety.
+// directory (a profile's own data_dir, or the top-level data_dir) rather
+// than a private default — used to decide SQLite journal mode and whether
+// to treat the path as possibly folder-synced. The legacy db_path key is a
+// full file path, not a directory, so it isn't treated as "shared" here
+// even though it's also a user override; data_dir is the supported way to
+// opt into sync safety.
 func Shared() bool {
+	if name := ActiveProfile(); name != "" {
+		_, shared := ProfileDir(name)
+		return shared
+	}
 	return viper.GetString("data_dir") != ""
 }
 
@@ -52,6 +65,94 @@ func Shared() bool {
 // revert to the private default. Used by the TUI's "o" settings screen.
 func SetDataDir(dir string) error {
 	viper.Set("data_dir", contractHome(dir))
+	return writeConfigFile()
+}
+
+// Profiles returns the configured profile names, sorted.
+func Profiles() []string {
+	m := viper.GetStringMap("profiles")
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ActiveProfile returns the currently active profile name, or "" for the
+// unscoped default database.
+func ActiveProfile() string {
+	return viper.GetString("active_profile")
+}
+
+// ProfileExists reports whether name is a configured profile.
+func ProfileExists(name string) bool {
+	_, ok := viper.GetStringMap("profiles")[name]
+	return ok
+}
+
+// ProfileDir resolves a profile's data directory: its own data_dir
+// override (profiles.<name>.data_dir) if set, resolved the same way
+// top-level data_dir is; otherwise a private, non-synced subfolder under
+// this tool's default data directory.
+func ProfileDir(name string) (dir string, shared bool) {
+	if override := viper.GetString("profiles." + name + ".data_dir"); override != "" {
+		return coreconfig.ResolveDir("budgetctl", override)
+	}
+	dir = filepath.Join(coreconfig.DataDir("budgetctl"), "profiles", name)
+	_ = os.MkdirAll(dir, 0o755)
+	return dir, false
+}
+
+// AddProfile registers a new profile. dataDir is optional; empty means the
+// profile's database lives in a private default subfolder. Pass a folder
+// (e.g. inside iCloud Drive/Dropbox) to sync that profile like data_dir
+// does for the unscoped default.
+func AddProfile(name, dataDir string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("profile name required")
+	}
+	if name == "default" || strings.ContainsAny(name, "/\\.") {
+		return fmt.Errorf("profile name can't be \"default\" or contain path separators or dots")
+	}
+	if ProfileExists(name) {
+		return fmt.Errorf("profile %q already exists", name)
+	}
+	viper.Set("profiles."+name+".data_dir", contractHome(dataDir))
+	return writeConfigFile()
+}
+
+// RemoveProfile forgets a profile's mapping — it does NOT delete the
+// on-disk database, only the name that points at it. If name was the
+// active profile, the active profile is cleared back to the default.
+func RemoveProfile(name string) error {
+	if !ProfileExists(name) {
+		return fmt.Errorf("no profile named %q", name)
+	}
+	profiles := viper.GetStringMap("profiles")
+	delete(profiles, name)
+	viper.Set("profiles", profiles)
+	if ActiveProfile() == name {
+		viper.Set("active_profile", "")
+	}
+	return writeConfigFile()
+}
+
+// SetActiveProfile switches the active profile. "" clears it, reverting
+// DBPath/Shared to the unscoped default (data_dir/db_path/private
+// default). A non-empty name must already exist.
+func SetActiveProfile(name string) error {
+	if name != "" && !ProfileExists(name) {
+		return fmt.Errorf("no profile named %q — create it first with: budgetctl profile add %s", name, name)
+	}
+	viper.Set("active_profile", name)
+	return writeConfigFile()
+}
+
+// writeConfigFile persists the current viper state to
+// ~/.config/budgetctl/budgetctl.yaml, creating the directory if needed.
+func writeConfigFile() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -108,15 +209,7 @@ func SetLicense(key, status, benefitID string) error {
 	viper.Set("license_key", key)
 	viper.Set("license_status", status)
 	viper.Set("license_benefit_id", benefitID)
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	cfgDir := filepath.Join(home, ".config", "budgetctl")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
-		return err
-	}
-	return viper.WriteConfigAs(filepath.Join(cfgDir, "budgetctl.yaml"))
+	return writeConfigFile()
 }
 
 func expandHome(p string) string {
