@@ -33,6 +33,15 @@ func DBPath() string {
 		dir, _ := ProfileDir(name)
 		return filepath.Join(dir, "budget.db")
 	}
+	return DefaultDBPath()
+}
+
+// DefaultDBPath returns the unscoped database path — what DBPath resolves
+// to with no active profile — regardless of whether a profile is currently
+// active. Used to show the "default" row in `budgetctl profile list`
+// correctly even while a different profile is active; DBPath itself can't
+// be reused for that since it always follows ActiveProfile.
+func DefaultDBPath() string {
 	if dir := viper.GetString("data_dir"); dir != "" {
 		resolved, _ := coreconfig.ResolveDir("budgetctl", dir)
 		return filepath.Join(resolved, "budget.db")
@@ -56,6 +65,13 @@ func Shared() bool {
 		_, shared := ProfileDir(name)
 		return shared
 	}
+	return DefaultShared()
+}
+
+// DefaultShared mirrors DefaultDBPath for Shared(): whether the unscoped
+// default resolves to a user-configured (possibly synced) directory,
+// regardless of whether a profile is currently active.
+func DefaultShared() bool {
 	return viper.GetString("data_dir") != ""
 }
 
@@ -148,6 +164,22 @@ func SetActiveProfile(name string) error {
 	}
 	viper.Set("active_profile", name)
 	return writeConfigFile()
+}
+
+// SetSessionProfile overrides the active profile for the current process
+// only — unlike SetActiveProfile, it does NOT persist to config, so it's
+// safe for a one-off override (the --profile flag) without touching
+// whichever profile is configured as the sticky default. "default" clears
+// back to the unscoped database, same as SetActiveProfile("").
+func SetSessionProfile(name string) error {
+	if name == "default" {
+		name = ""
+	}
+	if name != "" && !ProfileExists(name) {
+		return fmt.Errorf("no profile named %q — create it first with: budgetctl profile add %s", name, name)
+	}
+	viper.Set("active_profile", name)
+	return nil
 }
 
 // writeConfigFile persists the current viper state to

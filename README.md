@@ -63,6 +63,7 @@ budgetctl export [--year 2026] [--format csv|json] [-o FILE]
 budgetctl profile add NAME [--data-dir DIR]          Create an isolated profile
 budgetctl profile use NAME                           Switch active profile ("default" clears it)
 budgetctl profile list                               List profiles
+budgetctl <cmd> --profile NAME                       Run one command against a profile (doesn't switch it)
 budgetctl mcp                                        Start MCP server (stdio)
 ```
 
@@ -186,6 +187,14 @@ In the TUI, press `p` to switch, create, or remove profiles the same way.
 
 With no active profile, budgetctl behaves exactly as before — a single
 unscoped database, optionally synced via `data_dir` as described above.
+
+For a one-off command against a profile without switching your saved
+active one, pass `--profile` (or `-p`) instead:
+
+```bash
+budgetctl import statement.csv --profile firma --account checking
+budgetctl --profile firma summary
+```
 
 ---
 

@@ -44,7 +44,7 @@ var profileListCmd = &cobra.Command{
 			}
 			dir, shared := "", false
 			if name == "default" {
-				dir, shared = config.DBPath(), config.Shared()
+				dir, shared = config.DefaultDBPath(), config.DefaultShared()
 			} else {
 				d, s := config.ProfileDir(name)
 				dir, shared = d, s

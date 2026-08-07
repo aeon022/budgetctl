@@ -1,7 +1,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -74,6 +76,37 @@ func TestAddProfileAndSwitch(t *testing.T) {
 	}
 }
 
+// TestDefaultDBPathIgnoresActiveProfile guards against a regression where
+// `budgetctl profile list`'s "default" row showed the active profile's own
+// path instead of the true unscoped default — because it read DBPath(),
+// which always follows ActiveProfile(). DefaultDBPath/DefaultShared must
+// stay stable regardless of which profile (if any) is active.
+func TestDefaultDBPathIgnoresActiveProfile(t *testing.T) {
+	home := resetViper(t)
+	wantDefault := filepath.Join(home, ".local", "share", "budgetctl", "budget.db")
+
+	if got := DefaultDBPath(); got != wantDefault {
+		t.Errorf("DefaultDBPath() before any profile = %q, want %q", got, wantDefault)
+	}
+
+	if err := AddProfile("firma", ""); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if err := SetActiveProfile("firma"); err != nil {
+		t.Fatalf("SetActiveProfile: %v", err)
+	}
+
+	if got := DefaultDBPath(); got != wantDefault {
+		t.Errorf("DefaultDBPath() with firma active = %q, want %q (must stay the unscoped default)", got, wantDefault)
+	}
+	if got := DBPath(); got == wantDefault {
+		t.Error("DBPath() with firma active should NOT equal the unscoped default path")
+	}
+	if DefaultShared() {
+		t.Error("DefaultShared() = true, want false (no top-level data_dir set)")
+	}
+}
+
 func TestAddProfileWithDataDir(t *testing.T) {
 	home := resetViper(t)
 	synced := filepath.Join(home, "Sync", "firma")
@@ -109,6 +142,65 @@ func TestAddProfileRejectsDuplicate(t *testing.T) {
 	}
 	if err := AddProfile("firma", ""); err == nil {
 		t.Error("AddProfile duplicate name = nil error, want an error")
+	}
+}
+
+// TestSetSessionProfileDoesNotPersist covers the --profile flag's use
+// case: a one-off override that must NOT survive into the next process
+// (unlike SetActiveProfile, which writes to config).
+func TestSetSessionProfileDoesNotPersist(t *testing.T) {
+	home := resetViper(t)
+	if err := AddProfile("firma", ""); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+
+	cfgFile := filepath.Join(home, ".config", "budgetctl", "budgetctl.yaml")
+	before, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatalf("reading config file after AddProfile: %v", err)
+	}
+
+	if err := SetSessionProfile("firma"); err != nil {
+		t.Fatalf("SetSessionProfile: %v", err)
+	}
+	if ActiveProfile() != "firma" {
+		t.Errorf("ActiveProfile() = %q after SetSessionProfile, want firma", ActiveProfile())
+	}
+
+	// SetSessionProfile must not touch the config file on disk — a fresh
+	// process reading it later must not see firma as the active profile.
+	after, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatalf("reading config file after SetSessionProfile: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("config file changed after SetSessionProfile:\nbefore: %s\nafter:  %s", before, after)
+	}
+	if strings.Contains(string(after), "active_profile: firma") {
+		t.Error("config file contains active_profile: firma — SetSessionProfile must not persist")
+	}
+}
+
+func TestSetSessionProfileDefaultClears(t *testing.T) {
+	resetViper(t)
+	if err := AddProfile("firma", ""); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if err := SetActiveProfile("firma"); err != nil {
+		t.Fatalf("SetActiveProfile: %v", err)
+	}
+	if err := SetSessionProfile("default"); err != nil {
+		t.Fatalf("SetSessionProfile(default): %v", err)
+	}
+	if ActiveProfile() != "" {
+		t.Errorf("ActiveProfile() = %q, want \"\" after SetSessionProfile(\"default\")", ActiveProfile())
+	}
+}
+
+func TestSetSessionProfileRequiresExisting(t *testing.T) {
+	resetViper(t)
+	if err := SetSessionProfile("ghost"); err == nil {
+		t.Error("SetSessionProfile(unknown) = nil error, want an error")
 	}
 }
 
