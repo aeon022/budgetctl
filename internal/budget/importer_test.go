@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/aeon022/budgetctl/internal/models"
 )
@@ -243,6 +244,109 @@ func TestImportATUmsatzliste(t *testing.T) {
 	}
 	if txs[1].Description != "lunch and dinner" {
 		t.Errorf("expected purpose split out of the 'Zahlungsreferenz:' fallback, got %q", txs[1].Description)
+	}
+}
+
+func TestImportGeorge(t *testing.T) {
+	// George (Erste Bank/Sparkasse online banking) export: header row,
+	// COMMA-delimited (the amount's own German comma decimal stays safely
+	// inside its quotes), counterparty split across separate Partnername/
+	// Buchungs-Details columns rather than one blob.
+	csv := "\xef\xbb\xbf\"Eigener Kontoname\",\"Eigene IBAN\",\"Buchungsdatum\",\"Partnername\",\"Partner IBAN\",\"BIC/SWIFT\",\"Partner Kontonummer\",\"Bankleitzahl\",\"Betrag\",\"Währung\",\"Buchungs-Details\",\"Buchungsreferenz\",\"Notiz\",\"Highlight\",\"Valutadatum\"\n" +
+		"\"Girokonto\",\"AT752081503400801423\",\"31.12.2025\",\"\",\"\",\"\",\"9971971982\",\"20815\",\"-44,72\",\"EUR\",\"Kontoführung\",\"ref1\",\"\",\"0\",\"31.12.2025\"\n" +
+		"\"Girokonto\",\"AT752081503400801423\",\"23.12.2025\",\"Muster GmbH\",\"AT486000080310095188\",\"\",\"80310095188\",\"60000\",\"-2.000,00\",\"EUR\",\"a conto\",\"ref2\",\"\",\"0\",\"23.12.2025\"\n"
+
+	txs, err := Import(writeTemp(t, "AT752081503400801423_2025.csv", csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txs) != 2 {
+		t.Fatalf("want 2 transactions, got %d", len(txs))
+	}
+	if txs[0].Amount != -44.72 {
+		t.Errorf("want amount -44.72, got %v", txs[0].Amount)
+	}
+	if txs[0].Description != "Kontoführung" {
+		t.Errorf("want description Kontoführung, got %q", txs[0].Description)
+	}
+	if txs[0].Payee != "" {
+		t.Errorf("want empty payee for a fee row with no Partnername, got %q", txs[0].Payee)
+	}
+	if txs[0].Account != "Girokonto" {
+		t.Errorf("want account Girokonto (from Eigener Kontoname), got %q", txs[0].Account)
+	}
+	if txs[1].Amount != -2000.00 {
+		t.Errorf("want amount -2000.00 (German thousands separator), got %v", txs[1].Amount)
+	}
+	if txs[1].Payee != "Muster GmbH" {
+		t.Errorf("want payee Muster GmbH, got %q", txs[1].Payee)
+	}
+	if txs[1].Date.Format("2006-01-02") != "2025-12-23" {
+		t.Errorf("unexpected date: %v", txs[1].Date)
+	}
+}
+
+// TestImportGeorgeUTF16LE guards the actual failure this format shipped
+// with: George's own CSV export (Save-As from Excel/Windows) comes out as
+// UTF-16LE with a BOM, not UTF-8 — every byte-oriented CSV reader chokes on
+// that unless it's transcoded first (see decodeToUTF8).
+func TestImportGeorgeUTF16LE(t *testing.T) {
+	csv := "\"Eigener Kontoname\",\"Eigene IBAN\",\"Buchungsdatum\",\"Partnername\",\"Partner IBAN\",\"BIC/SWIFT\",\"Partner Kontonummer\",\"Bankleitzahl\",\"Betrag\",\"Währung\",\"Buchungs-Details\",\"Buchungsreferenz\",\"Notiz\",\"Highlight\",\"Valutadatum\"\n" +
+		"\"Girokonto\",\"AT752081503400801423\",\"31.12.2025\",\"\",\"\",\"\",\"9971971982\",\"20815\",\"-357,87\",\"EUR\",\"Kontoführung\",\"ref1\",\"\",\"0\",\"31.12.2025\"\n"
+
+	path := filepath.Join(t.TempDir(), "AT752081503400801423_2025.csv")
+	if err := os.WriteFile(path, utf16LEWithBOM(csv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	txs, err := Import(path)
+	if err != nil {
+		t.Fatalf("Import of UTF-16LE George export failed: %v", err)
+	}
+	if len(txs) != 1 {
+		t.Fatalf("want 1 transaction, got %d", len(txs))
+	}
+	if txs[0].Amount != -357.87 {
+		t.Errorf("want amount -357.87, got %v", txs[0].Amount)
+	}
+	if txs[0].Description != "Kontoführung" {
+		t.Errorf("want description Kontoführung (umlaut must survive the UTF-16→UTF-8 transcode), got %q", txs[0].Description)
+	}
+}
+
+// utf16LEWithBOM encodes s as UTF-16LE with a leading BOM, matching what
+// Excel's "CSV UTF-16 Unicode" Save-As option produces.
+func utf16LEWithBOM(s string) []byte {
+	out := []byte{0xFF, 0xFE}
+	for _, r := range utf16.Encode([]rune(s)) {
+		out = append(out, byte(r), byte(r>>8))
+	}
+	return out
+}
+
+func TestDecodeToUTF8Windows1252Fallback(t *testing.T) {
+	// "Käse" with a raw Windows-1252 0xE4 byte for "ä" instead of the
+	// proper UTF-8 encoding — no BOM, so decodeToUTF8 must detect the
+	// invalid UTF-8 and fall back to Windows-1252 rather than passing
+	// mojibake straight through.
+	raw := []byte("K\xe4se")
+	out, err := decodeToUTF8(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "Käse" {
+		t.Errorf("want %q, got %q", "Käse", out)
+	}
+}
+
+func TestDecodeToUTF8PlainUTF8Passthrough(t *testing.T) {
+	raw := []byte("Käse")
+	out, err := decodeToUTF8(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "Käse" {
+		t.Errorf("want %q, got %q", "Käse", out)
 	}
 }
 

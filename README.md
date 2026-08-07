@@ -205,9 +205,13 @@ budgetctl --profile firma summary
 | N26 | German | `Datum`, `Betrag EUR` | Standard N26 account export |
 | ING | German | `Buchung`, `Betrag` | Semicolon-delimited |
 | DKB | German | `Wertstellung`, `Gläubiger-ID` | Deutsche Kreditbank format |
+| George (Erste Bank/Sparkasse) | German | `Eigene IBAN`, `Partner IBAN`, `Buchungsdatum` | Comma-delimited, e.g. Steiermärkische Sparkasse's online banking export |
+| Austrian "Umsatzliste" | German | No header row; starts `DD.MM.YYYY;"..."` | Older Sparkasse-family export, semicolon-delimited |
 | Generic | Any | Auto-detected | Looks for date, amount, and description columns by header name |
 
 For generic CSVs, budgetctl scans the header row and picks the most likely columns. If detection fails, rename your headers to `date`, `amount`, and `description`.
+
+File encoding is auto-detected — UTF-8, UTF-16 (LE/BE, with or without a BOM, e.g. Excel's "CSV UTF-16 Unicode" Save-As option), and Windows-1252 all just work.
 
 ---
 

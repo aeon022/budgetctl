@@ -12,48 +12,87 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aeon022/budgetctl/internal/models"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 // Import reads a CSV bank export and returns transactions.
-// Supports N26, ING, Deutsche Bank, and generic formats.
+// Supports N26, ING, DKB, Steiermärkische Sparkasse (George), and generic
+// formats.
 func Import(path string) ([]models.Transaction, error) {
-	f, err := os.Open(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-
-	format := detectFormat(path, f)
-	_, _ = f.Seek(0, io.SeekStart)
-
-	switch format {
-	case "n26":
-		return parseN26(f, filepath.Base(path))
-	case "ing":
-		return parseING(f, filepath.Base(path))
-	case "dkb":
-		return parseDKB(f, filepath.Base(path))
-	case "at-umsatzliste":
-		return parseATUmsatzliste(f, filepath.Base(path))
-	default:
-		return parseGeneric(f, filepath.Base(path))
+	data, err := decodeToUTF8(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", filepath.Base(path), err)
 	}
+	source := filepath.Base(path)
+
+	switch detectFormat(path, data) {
+	case "n26":
+		return parseN26(bytes.NewReader(data), source)
+	case "ing":
+		return parseING(bytes.NewReader(data), source)
+	case "dkb":
+		return parseDKB(bytes.NewReader(data), source)
+	case "at-umsatzliste":
+		return parseATUmsatzliste(bytes.NewReader(data), source)
+	case "george":
+		return parseGeorge(bytes.NewReader(data), source)
+	default:
+		return parseGeneric(bytes.NewReader(data), source)
+	}
+}
+
+// decodeToUTF8 transcodes a bank CSV export to UTF-8, if it isn't already.
+// Bank exports vary wildly in encoding — Excel's Windows "CSV UTF-16
+// Unicode" Save-As option is a common default for Austrian/German banking
+// software and produces files that are pure garbage to any byte-oriented
+// CSV parser without this step first.
+//
+// A BOM (UTF-8, UTF-16LE, or UTF-16BE) is the reliable signal, so it's
+// checked first and handled via BOMOverride, which strips it either way.
+// With no BOM, raw is checked for valid UTF-8 BEFORE attempting any
+// decode — unicode.UTF8's own decoder is lossy (it silently substitutes
+// U+FFFD for invalid bytes rather than erroring), and U+FFFD encodes as
+// perfectly valid UTF-8, so decoding first and checking validity after
+// would always report "valid" and never reach the Windows-1252 fallback
+// below — the common default for exports with no explicit "UTF-8" choice.
+func decodeToUTF8(raw []byte) ([]byte, error) {
+	hasBOM := bytes.HasPrefix(raw, []byte{0xFF, 0xFE}) || // UTF-16LE
+		bytes.HasPrefix(raw, []byte{0xFE, 0xFF}) || // UTF-16BE
+		bytes.HasPrefix(raw, []byte{0xEF, 0xBB, 0xBF}) // UTF-8
+	if hasBOM {
+		out, _, err := transform.Bytes(unicode.BOMOverride(unicode.UTF8.NewDecoder()), raw)
+		return out, err
+	}
+	if utf8.Valid(raw) {
+		return raw, nil
+	}
+	out, _, err := transform.Bytes(charmap.Windows1252.NewDecoder(), raw)
+	return out, err
 }
 
 // ── Format detection ──────────────────────────────────────────────────────────
 
 // atUmsatzlisteStart matches the first data row of an Austrian bank
-// "Umsatzliste" export (e.g. Steiermärkische Sparkasse): no header row at
-// all, just DD.MM.YYYY;"quoted description"... straight from the first byte
-// (after an optional UTF-8 BOM).
+// "Umsatzliste" export (e.g. Steiermärkische Sparkasse's older format): no
+// header row at all, just DD.MM.YYYY;"quoted description"...
 var atUmsatzlisteStart = regexp.MustCompile(`^\d{2}\.\d{2}\.\d{4};"`)
 
-func detectFormat(path string, f *os.File) string {
-	buf := make([]byte, 512)
-	n, _ := f.Read(buf)
-	raw := bytes.TrimPrefix(buf[:n], []byte{0xEF, 0xBB, 0xBF}) // UTF-8 BOM
+// detectFormat expects data already decoded to UTF-8 (see decodeToUTF8).
+func detectFormat(path string, data []byte) string {
+	n := len(data)
+	if n > 512 {
+		n = 512
+	}
+	raw := bytes.TrimPrefix(data[:n], []byte{0xEF, 0xBB, 0xBF}) // stray UTF-8 BOM, if decodeToUTF8 left one behind
 	header := strings.ToLower(string(raw))
 
 	switch {
@@ -66,6 +105,11 @@ func detectFormat(path string, f *os.File) string {
 		return "ing"
 	case strings.Contains(header, "dkb") || strings.Contains(header, "deutsche kreditbank"):
 		return "dkb"
+	// "Eigene IBAN"/"Partner IBAN" is George's (Erste Bank/Sparkasse online
+	// banking) CSV export header — distinctive enough not to collide with
+	// any other supported format.
+	case strings.Contains(header, "eigene iban") && strings.Contains(header, "partner iban"):
+		return "george"
 	case atUmsatzlisteStart.Match(raw):
 		return "at-umsatzliste"
 	default:
@@ -221,12 +265,7 @@ func parseDKB(r io.Reader, source string) ([]models.Transaction, error) {
 // assistant's "t" step or `budgetctl import --account`.
 
 func parseATUmsatzliste(r io.Reader, source string) ([]models.Transaction, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
-	rows, err := readCSV(bytes.NewReader(data), ';')
+	rows, err := readCSV(r, ';')
 	if err != nil {
 		return nil, err
 	}
@@ -376,6 +415,96 @@ func extractMerchant(purpose string) string {
 		return ""
 	}
 	return strings.Title(strings.ToLower(strings.Join(tokens, " ")))
+}
+
+// ── George CSV (Erste Bank / Sparkasse online banking export) ──────────────────
+// Header row, COMMA-separated (the amount column's own German comma
+// decimal sits safely inside its quotes, e.g. "-357,87") — distinct from
+// the older, semicolon-separated headerless "Umsatzliste" export above.
+// German column names:
+// Eigener Kontoname,Eigene IBAN,Buchungsdatum,Partnername,Partner IBAN,
+// BIC/SWIFT,Partner Kontonummer,Bankleitzahl,Betrag,Währung,
+// Buchungs-Details,Buchungsreferenz,Notiz,Highlight,Valutadatum,...
+// Date format: DD.MM.YYYY, amount uses German comma decimal. Columns are
+// looked up by name rather than position, since George has added optional
+// trailing columns (card number, app, mandate/creditor IDs, ...) across
+// export versions.
+
+func parseGeorge(r io.Reader, source string) ([]models.Transaction, error) {
+	rows, err := readCSV(r, ',')
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 2 {
+		return nil, fmt.Errorf("no data rows in CSV")
+	}
+
+	col := columnIndex(rows[0])
+	dateI, amtI := col("Buchungsdatum"), col("Betrag")
+	if dateI < 0 || amtI < 0 {
+		return nil, fmt.Errorf("could not detect date/amount columns from header: %v", rows[0])
+	}
+	acctI, partnerI, detailI, refI := col("Eigener Kontoname"), col("Partnername"), col("Buchungs-Details"), col("Zahlungsreferenz")
+
+	var txs []models.Transaction
+	for _, row := range rows[1:] {
+		if len(row) <= amtI {
+			continue
+		}
+		date, err := time.Parse("02.01.2006", strings.TrimSpace(row[dateI]))
+		if err != nil {
+			continue
+		}
+		amount, err := parseAmountDE(row[amtI])
+		if err != nil {
+			continue
+		}
+		desc := field(row, detailI)
+		if desc == "" {
+			desc = field(row, refI)
+		}
+		account := field(row, acctI)
+		if account == "" {
+			account = "Sparkasse"
+		}
+		raw := strings.Join(row, ";")
+		txs = append(txs, models.Transaction{
+			ID:          txID(source, raw),
+			Date:        date,
+			Payee:       field(row, partnerI),
+			Description: desc,
+			Amount:      amount,
+			Account:     account,
+			Source:      source,
+			Raw:         raw,
+		})
+	}
+	return txs, nil
+}
+
+// columnIndex builds a case-insensitive header-name → column-index lookup,
+// so a format's parser can find columns by name instead of hardcoded
+// position (safe against the bank adding/reordering trailing columns).
+func columnIndex(header []string) func(name string) int {
+	idx := make(map[string]int, len(header))
+	for i, h := range header {
+		idx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+	return func(name string) int {
+		if i, ok := idx[strings.ToLower(name)]; ok {
+			return i
+		}
+		return -1
+	}
+}
+
+// field returns row[i], cleaned, or "" if i is out of range (column absent
+// from this particular export, or a short row).
+func field(row []string, i int) string {
+	if i < 0 || i >= len(row) {
+		return ""
+	}
+	return clean(row[i])
 }
 
 // ── Generic CSV ───────────────────────────────────────────────────────────────
