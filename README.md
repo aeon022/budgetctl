@@ -63,6 +63,8 @@ budgetctl export [--year 2026] [--format csv|json] [-o FILE]
 budgetctl profile add NAME [--data-dir DIR]          Create an isolated profile
 budgetctl profile use NAME                           Switch active profile ("default" clears it)
 budgetctl profile list                               List profiles
+budgetctl profile set-data-dir NAME DIR              Sync an existing profile ("" moves it back to local)
+budgetctl profile remove NAME                        Forget a profile (keeps its database on disk)
 budgetctl <cmd> --profile NAME                       Run one command against a profile (doesn't switch it)
 budgetctl mcp                                        Start MCP server (stdio)
 ```
