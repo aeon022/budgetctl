@@ -642,12 +642,7 @@ func parseDate(s string) (time.Time, error) {
 }
 
 func clean(s string) string {
-	s = strings.TrimSpace(s)
-	// collapse multiple spaces
-	for strings.Contains(s, "  ") {
-		s = strings.ReplaceAll(s, "  ", " ")
-	}
-	return s
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func txID(source, raw string) string {

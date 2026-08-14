@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -560,10 +559,4 @@ func scanTx(rows *sql.Rows) ([]models.Transaction, error) {
 		txs = append(txs, t)
 	}
 	return txs, rows.Err()
-}
-
-// JSONSummary encodes a summary as pretty JSON.
-func JSONSummary(sum *models.Summary) (string, error) {
-	b, err := json.MarshalIndent(sum, "", "  ")
-	return string(b), err
 }
