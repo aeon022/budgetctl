@@ -79,6 +79,7 @@ budgetctl mcp                                        Start MCP server (stdio)
 |---|---|
 | `budgetctl import FILE` | Import a bank CSV export. Auto-detects N26, ING, DKB, or generic format. |
 | `budgetctl import FILE --account NAME` | Tag imported transactions with an account name. |
+| `budgetctl import FILE --ai` | AI-categorize uncategorized transactions on import (missionctl Bundle feature). |
 | `budgetctl list` | List transactions for the current month. |
 | `budgetctl list --month 2026-07` | List transactions for a specific month. |
 | `budgetctl list --category groceries` | Filter by category. |
@@ -96,6 +97,8 @@ budgetctl mcp                                        Start MCP server (stdio)
 | `budgetctl tag PATTERN --category NAME` | Create a rule: any transaction whose description contains PATTERN (case-insensitive) gets assigned NAME. |
 | `budgetctl tag PATTERN --category NAME --apply` | Create the rule and immediately apply it to all existing transactions. |
 | `budgetctl apply-rules` | Re-run all category rules against all transactions in the database. Useful after importing new data without `--apply`. |
+
+AI categorization (Anthropic/OpenAI/Gemini/local Ollama, via `--ai` on import or `a` in the TUI) is a missionctl Bundle feature — get it at [missionctl.sh/#pricing](https://missionctl.sh/#pricing), then `budgetctl license activate <key>`. Without a license, both fall back to rule-based categorization only.
 
 Rules use substring matching. Examples:
 
@@ -241,6 +244,7 @@ Shows a full-month overview:
 - Income / expenses / net totals at the top
 - Category bar chart showing spend per category
 - Budget goals section with color-coded progress bars (green < 80%, amber 80–99%, red >= 100%)
+- Press `g` to set a goal right from this view (see below)
 
 ### Keybindings
 
@@ -251,27 +255,39 @@ Shows a full-month overview:
 | `j` / `k` | Navigate down / up |
 | `PgDn` / `PgUp` | Page down / up |
 | `g` / `G` | Jump to first / last transaction |
+| `Enter` | View full entry details |
 | `n` | New manual entry (date, description, amount, category) |
 | `e` | Edit selected entry |
 | `d` | Delete selected entry (asks to confirm) |
+| `u` | Undo last delete |
 | `c` | Set category for selected entry |
+| `a` | AI-categorize all uncategorized entries (missionctl Bundle feature) |
+| `v` | Select mode — batch-categorize multiple entries (space to toggle, `A` for all, `c` to apply) |
+| `i` | Import a CSV file |
+| `/` | Search transactions |
+| `f` | Filter by category (fuzzy-searchable) |
+| `:` | Command palette — run any action by name |
 | `s` | Switch to Summary view |
-| `S` | Sync (re-apply rules, refresh data) |
-| `/` | Open search |
 | `Tab` / `Shift+Tab` | Next / previous month |
+| `y` / `Y` | Jump to next / previous year with data |
+| `[` / `]` | Cycle accounts |
+| `o` | Settings (sync data across devices) |
+| `p` | Profiles (switch between fully separate databases) |
 | `?` | Help overlay |
-| `Enter` / `Esc` | Back / cancel |
+| `q` | Quit |
 
 In the entry form, amounts accept both `-12.50` and `-12,90` (German decimal comma).
 Negative = expense, positive = income.
-| `q` | Quit |
 
 **Summary View**
 
 | Key | Action |
 |---|---|
 | `Esc` | Back to List view |
+| `g` | Set a budget goal — type `category amount`, e.g. `Dining 200` |
 | `Tab` / `Shift+Tab` | Next / previous month |
+| `y` / `Y` | Jump to next / previous year with data |
+| `[` / `]` | Cycle accounts |
 | `↑` / `↓` | Scroll |
 | `q` | Quit |
 

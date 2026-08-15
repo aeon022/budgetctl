@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,6 +125,11 @@ type searchLoadedMsg struct{ txs []models.Transaction }
 type errMsg struct{ err error }
 type txSavedMsg struct{ err error }
 type txDeletedMsg struct{ err error }
+type goalSavedMsg struct{ err error }
+type aiCategorizedMsg struct {
+	count int
+	err   error
+}
 type importParsedMsg struct {
 	txs []models.Transaction
 	err error
@@ -184,6 +190,10 @@ type Model struct {
 	categorizing bool
 	catInput     textinput.Model
 	deleteTarget *models.Transaction
+
+	// goal quick-set ("g" in summary view) — "<category> <amount>" in one line
+	settingGoal bool
+	goalInput   textinput.Model
 
 	// batch select mode ("v") — bulk-categorize, same pattern taskctl's
 	// own select mode uses. When categorizing is entered while selecting
@@ -260,6 +270,7 @@ var paletteCommands = []palette.Command{
 	{Name: "detail", Desc: "View full details", Key: "enter"},
 	{Name: "import", Desc: "Import CSV (N26, ING, DKB, generic)", Key: "i"},
 	{Name: "category", Desc: "Set category for selected entry", Key: "c"},
+	{Name: "ai-categorize", Desc: "AI-categorize all uncategorized entries", Key: "a"},
 	{Name: "undo", Desc: "Undo last delete", Key: "u"},
 	{Name: "select", Desc: "Select mode (batch categorize)", Key: "v"},
 	{Name: "search", Desc: "Search transactions", Key: "/"},
@@ -281,7 +292,10 @@ func New() Model {
 	ci := textinput.New()
 	ci.Placeholder = "category…"
 	ci.CharLimit = 60
-	return Model{searchInput: si, paletteInput: pi, catInput: ci, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
+	gi := textinput.New()
+	gi.Placeholder = "category amount, e.g. Dining 200"
+	gi.CharLimit = 60
+	return Model{searchInput: si, paletteInput: pi, catInput: ci, goalInput: gi, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
 }
 
 func newForm(t *models.Transaction) [fCount]textinput.Model {
@@ -433,6 +447,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = viewList
 			m.editTx = nil
 			m.setStatus("saved")
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		}
+
+	case goalSavedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			m.setStatus("goal saved")
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		}
+
+	case aiCategorizedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		} else if msg.count == 0 {
+			m.setStatus("nothing to categorize")
+		} else {
+			m.setStatus(fmt.Sprintf("AI-categorized %d transaction(s)", msg.count))
 			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 
@@ -1615,6 +1647,13 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selecting = true
 			m.selected = map[string]bool{m.txs[m.cursor].ID: true}
 		}
+	case "a":
+		if !config.IsPro() {
+			m.setStatus("AI categorize is a missionctl Bundle feature — missionctl.sh/#pricing")
+			return m, nil
+		}
+		m.setStatus("Categorizing via AI…")
+		return m, aiCategorizeCmd(m.allTxs, m.categories)
 	case "esc":
 		switch {
 		case m.searchQ != "":
@@ -1631,10 +1670,41 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.settingGoal {
+		switch msg.String() {
+		case "enter":
+			m.settingGoal = false
+			m.goalInput.Blur()
+			fields := strings.Fields(m.goalInput.Value())
+			if len(fields) < 2 {
+				m.err = fmt.Errorf("goal: expected \"<category> <amount>\"")
+				return m, nil
+			}
+			amount, err := strconv.ParseFloat(fields[len(fields)-1], 64)
+			if err != nil || amount <= 0 {
+				m.err = fmt.Errorf("goal: amount must be a positive number")
+				return m, nil
+			}
+			category := strings.Join(fields[:len(fields)-1], " ")
+			return m, goalSetCmd(category, amount)
+		case "esc":
+			m.settingGoal = false
+			m.goalInput.Blur()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.goalInput, cmd = m.goalInput.Update(msg)
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case "q", "esc":
 		m.view = viewList
 		return m, nil
+	case "g":
+		m.settingGoal = true
+		m.goalInput.SetValue("")
+		return m, m.goalInput.Focus()
 	case "tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
@@ -1803,6 +1873,56 @@ func batchSetCategoryCmd(ids []string, category string) tea.Cmd {
 			}
 		}
 		return txSavedMsg{lastErr}
+	}
+}
+
+func goalSetCmd(category string, amount float64) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath(), config.Shared())
+		if err != nil {
+			return goalSavedMsg{err}
+		}
+		defer s.Close()
+		return goalSavedMsg{s.SaveGoal(context.Background(), category, amount)}
+	}
+}
+
+// aiCategorizeCmd sends every currently-uncategorized transaction to the AI
+// provider (same budget.AICategories used by `import --ai`) and writes back
+// whatever categories it returns.
+func aiCategorizeCmd(txs []models.Transaction, existingCategories []string) tea.Cmd {
+	return func() tea.Msg {
+		var uncategorized []models.Transaction
+		for _, t := range txs {
+			if strings.TrimSpace(t.Category) == "" {
+				uncategorized = append(uncategorized, t)
+			}
+		}
+		if len(uncategorized) == 0 {
+			return aiCategorizedMsg{}
+		}
+
+		result, err := budget.AICategories(context.Background(), uncategorized, existingCategories)
+		if err != nil {
+			return aiCategorizedMsg{err: err}
+		}
+
+		s, err := store.New(config.DBPath(), config.Shared())
+		if err != nil {
+			return aiCategorizedMsg{err: err}
+		}
+		defer s.Close()
+
+		ctx := context.Background()
+		count := 0
+		for _, t := range uncategorized {
+			if cat, ok := result[t.Description]; ok && cat != "" {
+				if err := s.SetCategory(ctx, t.ID, cat); err == nil {
+					count++
+				}
+			}
+		}
+		return aiCategorizedMsg{count: count}
 	}
 }
 
@@ -2329,7 +2449,7 @@ func (m Model) renderList() string {
 			styleHelp.Render("  space toggle  A all  c categorize  esc cancel") + "\n")
 	}
 
-	listH := m.height - m.listStartRow() - 2 // divider + trailing status bar
+	listH := m.height - m.listStartRow() - 3 // blank spacer + divider + trailing status bar
 	if listH < 1 {
 		listH = 1
 	}
@@ -2400,16 +2520,16 @@ func (m Model) renderList() string {
 		// full legend is 139 cols — wider than most terminals, where it wraps
 		// and mangles the divider/net line below it. Below that width, show
 		// only the everyday keys and point to "?" for the rest.
-		bar = styleHelp.Render("enter:details  n:new  s:summary  /:search  ?:help  q:quit")
+		bar = styleHelp.Render("enter:details  n:new  a:ai-categorize  s:summary  /:search  ?:help  q:quit")
 	} else {
-		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  u:undo  c:categorize  s:summary  /:search  f:filter  tab:month  y:year  ]:account  ?:help  q:quit")
+		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  u:undo  c:categorize  a:ai-categorize  v:select  s:summary  /:search  f:filter  tab:month  y:year  ]:account  ?:help  q:quit")
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
 	if pad < 0 {
 		pad = 0
 	}
-	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
+	b.WriteString("\n" + styleDivider.Render(strings.Repeat("─", w)) + "\n")
 	b.WriteString("  " + bar + strings.Repeat(" ", pad) + right)
 	return b.String()
 }
@@ -2454,11 +2574,13 @@ func (m Model) helpContent() string {
 		Row("e", "edit selected entry").
 		Row("d", "delete entry (asks to confirm)").
 		Row("c", "set category for selected entry").
+		Row("a", "AI-categorize all uncategorized entries (missionctl Bundle feature)").
 		Section("Data").
 		Row("/", "search transactions (esc clears)").
 		Row(":", "command palette — type an action by name").
 		Row("f", "filter by category — fuzzy-searchable popup (esc clears)").
 		Row("s", "summary — categories, charts, budget goals").
+		Row("g", "(in summary) set a budget goal — \"category amount\"").
 		Section("Accounts").
 		Text("No separate \"create account\" step — an account is just a text tag").
 		Text("on transactions. It appears the first time you tag something with it:").
@@ -2544,14 +2666,21 @@ func (m Model) renderSummaryView() string {
 	if len(m.accounts) > 0 {
 		vpH--
 	}
+	if m.settingGoal {
+		vpH--
+	}
 	m.vp.Height = vpH
 	b.WriteString(m.vp.View())
+
+	if m.settingGoal {
+		b.WriteString("  " + styleCategory.Render("goal (category amount): ") + m.goalInput.View() + "\n")
+	}
 
 	pct := ""
 	if m.vp.TotalLineCount() > m.vp.Height {
 		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
 	}
-	b.WriteString("\n  " + styleHelp.Render("esc:back  tab:month  y:year  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
+	b.WriteString("\n  " + styleHelp.Render("esc:back  g:goal  tab:month  y:year  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
 	return b.String()
 }
 
