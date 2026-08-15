@@ -98,6 +98,10 @@ budgetctl mcp                                        Start MCP server (stdio)
 | `budgetctl tag PATTERN --category NAME --apply` | Create the rule and immediately apply it to all existing transactions. |
 | `budgetctl apply-rules` | Re-run all category rules against all transactions in the database. Useful after importing new data without `--apply`. |
 | `budgetctl category rename OLD NEW` | Rename a category everywhere — transactions, rules, and goals. Merges into NEW if it already exists (e.g. cleaning up an AI-invented "Insurance" into your existing "Versicherung"). |
+| `budgetctl category translate` | AI-suggest renames for categories that don't match your categorization language — preview only. |
+| `budgetctl category translate --apply` | Same, but actually run the suggested renames. |
+
+New categories the AI invents (via `--ai` on import or `a` in the TUI) always match your categorization language — detected from `BUDGETCTL_CATEGORY_LANG`, else `$LC_ALL`/`$LANG`, else English — but it never renames your *existing* categories on its own, even mismatched ones, since that could unexpectedly rewrite the book. `category translate` is the explicit, opt-in way to clean those up after the fact.
 
 AI categorization (Anthropic/OpenAI/Gemini/local Ollama, via `--ai` on import or `a` in the TUI) is a missionctl Bundle feature — get it at [missionctl.sh/#pricing](https://missionctl.sh/#pricing), then `budgetctl license activate <key>`. Without a license, both fall back to rule-based categorization only.
 
