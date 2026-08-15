@@ -73,7 +73,13 @@ func AICategories(ctx context.Context, txs []models.Transaction, existingCategor
 	if err != nil {
 		return nil, err
 	}
+	return parseCategoryResponse(text)
+}
 
+// parseCategoryResponse extracts a description->category map from the raw
+// AI response text. Split out from AICategories so it's testable without a
+// live AI call.
+func parseCategoryResponse(text string) (map[string]string, error) {
 	// Strip any surrounding markdown code fence the model might add
 	text = strings.TrimSpace(text)
 	if start := strings.Index(text, "{"); start >= 0 {
@@ -82,9 +88,32 @@ func AICategories(ctx context.Context, txs []models.Transaction, existingCategor
 		}
 	}
 
-	var result map[string]string
-	if err := json.Unmarshal([]byte(text), &result); err != nil {
-		return nil, fmt.Errorf("parse AI response: %w (raw: %s)", err, text)
+	// Unmarshal into map[string]any first, not map[string]string directly:
+	// response_format=json_object only guarantees syntactically valid JSON,
+	// not that the model actually stuck to the requested flat
+	// description->category shape — a weaker local model has been observed
+	// to instead invent a structured transaction-parsing schema (nested
+	// objects for date/merchant/amount) despite the prompt. A single
+	// non-string value would fail json.Unmarshal into map[string]string
+	// outright and discard every other, perfectly good categorization in
+	// the same batch — so decode loosely and just skip whatever doesn't fit.
+	var loose map[string]any
+	if err := json.Unmarshal([]byte(text), &loose); err != nil {
+		raw := text
+		if len(raw) > 300 {
+			raw = raw[:300] + "…"
+		}
+		return nil, fmt.Errorf("parse AI response: %w (raw: %s)", err, raw)
+	}
+
+	result := make(map[string]string, len(loose))
+	for desc, cat := range loose {
+		if s, ok := cat.(string); ok && s != "" {
+			result[desc] = s
+		}
+	}
+	if len(result) == 0 && len(loose) > 0 {
+		return nil, fmt.Errorf("AI response didn't include any usable category assignments — got a different JSON shape than expected")
 	}
 
 	return result, nil
