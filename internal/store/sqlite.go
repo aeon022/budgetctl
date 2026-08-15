@@ -130,6 +130,13 @@ func (s *Store) migrate() error {
 			category TEXT PRIMARY KEY,
 			monthly  REAL NOT NULL DEFAULT 0
 		);
+
+		CREATE TABLE IF NOT EXISTS tx_splits (
+			tx_id    TEXT NOT NULL,
+			category TEXT NOT NULL,
+			amount   REAL NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_splits_tx ON tx_splits(tx_id);
 	`)
 	if err != nil {
 		return err
@@ -217,7 +224,31 @@ func (s *Store) Summary(ctx context.Context, month, account string) (*models.Sum
 		args = append(args, account)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT category, SUM(amount) FROM transactions`+where+` GROUP BY category`, args...)
+	// Category totals are split-aware: a transaction with rows in tx_splits
+	// (see SetSplits) contributes via those rows — one per category — instead
+	// of its own category/amount, so a split transaction's amount is counted
+	// once per category, not once for the whole thing under its ";"-joined
+	// display label too.
+	tCond := ""
+	if month != "" {
+		tCond += ` AND t.date LIKE ?`
+	}
+	if account != "" {
+		tCond += ` AND t.account=?`
+	}
+	catQuery := `
+		SELECT category, SUM(amount) FROM (
+			SELECT t.category AS category, t.amount AS amount
+			FROM transactions t
+			WHERE NOT EXISTS (SELECT 1 FROM tx_splits sp WHERE sp.tx_id = t.id)` + tCond + `
+			UNION ALL
+			SELECT sp.category AS category, sp.amount AS amount
+			FROM tx_splits sp JOIN transactions t ON t.id = sp.tx_id
+			WHERE 1=1` + tCond + `
+		) GROUP BY category`
+	catArgs := append(append([]any{}, args...), args...)
+
+	rows, err := s.db.QueryContext(ctx, catQuery, catArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -410,9 +441,126 @@ func (s *Store) DeleteAll(ctx context.Context, account string) (int, error) {
 }
 
 func (s *Store) SetCategory(ctx context.Context, id, category string) error {
+	// Setting a single category is a hard override — drop any prior split
+	// (SetSplits) for this transaction so Summary()'s split-aware query
+	// doesn't keep counting stale per-category rows that no longer match
+	// what's now a single plain category.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM tx_splits WHERE tx_id=?`, id); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE transactions SET category=? WHERE id=?`, category, id)
 	return err
+}
+
+// SetSplits divides a transaction's amount equally across two or more
+// categories (TUI: type "Auto;Business" at the quick-categorize prompt).
+// transactions.category is set to the same ";"-joined string so the list
+// view still shows something sensible; Summary/goal totals use the
+// individual tx_splits rows instead so the amount isn't double-counted.
+func (s *Store) SetSplits(ctx context.Context, id string, categories []string) error {
+	var amount float64
+	if err := s.db.QueryRowContext(ctx, `SELECT amount FROM transactions WHERE id=?`, id).Scan(&amount); err != nil {
+		return err
+	}
+	each := amount / float64(len(categories))
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tx_splits WHERE tx_id=?`, id); err != nil {
+		return err
+	}
+	for _, cat := range categories {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO tx_splits (tx_id,category,amount) VALUES (?,?,?)`, id, cat, each); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE transactions SET category=? WHERE id=?`, strings.Join(categories, ";"), id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RenameCategory merges oldCat into newCat everywhere it appears —
+// transactions (plain and split), category rules, and budget goals (the
+// higher of the two monthly limits wins rather than summing them, since two
+// goals for what's now one category shouldn't silently double the limit).
+// Meant as a one-time cleanup, e.g. merging an AI-invented English category
+// into an existing German one.
+func (s *Store) RenameCategory(ctx context.Context, oldCat, newCat string) (int, error) {
+	// Split transactions referencing oldCat, remembered before the rename —
+	// their ";"-joined display label (transactions.category) can't be
+	// touched by a plain exact-match UPDATE below, since the stored value is
+	// the whole joined string, not the bare category name.
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT tx_id FROM tx_splits WHERE category=?`, oldCat)
+	if err != nil {
+		return 0, err
+	}
+	var splitTxIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		splitTxIDs = append(splitTxIDs, id)
+	}
+	rows.Close()
+
+	res, err := s.db.ExecContext(ctx, `UPDATE transactions SET category=? WHERE category=?`, newCat, oldCat)
+	if err != nil {
+		return 0, err
+	}
+	n64, _ := res.RowsAffected()
+	n := int(n64)
+
+	if _, err := s.db.ExecContext(ctx, `UPDATE tx_splits SET category=? WHERE category=?`, newCat, oldCat); err != nil {
+		return n, err
+	}
+	for _, id := range splitTxIDs {
+		var joined string
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT GROUP_CONCAT(category, ';') FROM tx_splits WHERE tx_id=?`, id,
+		).Scan(&joined); err != nil {
+			return n, err
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE transactions SET category=? WHERE id=?`, joined, id); err != nil {
+			return n, err
+		}
+		n++
+	}
+
+	if _, err := s.db.ExecContext(ctx, `UPDATE category_rules SET category=? WHERE category=?`, newCat, oldCat); err != nil {
+		return n, err
+	}
+
+	var oldMonthly float64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT monthly FROM budget_goals WHERE category=?`, strings.ToLower(oldCat)).Scan(&oldMonthly); err == nil {
+		var newMonthly float64
+		_ = s.db.QueryRowContext(ctx,
+			`SELECT monthly FROM budget_goals WHERE category=?`, strings.ToLower(newCat)).Scan(&newMonthly)
+		if oldMonthly > newMonthly {
+			newMonthly = oldMonthly
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO budget_goals (category, monthly) VALUES (?,?)
+			 ON CONFLICT(category) DO UPDATE SET monthly=excluded.monthly`,
+			strings.ToLower(newCat), newMonthly); err != nil {
+			return n, err
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM budget_goals WHERE category=?`, strings.ToLower(oldCat)); err != nil {
+			return n, err
+		}
+	}
+
+	return n, nil
 }
 
 // ── Category rules ────────────────────────────────────────────────────────────

@@ -31,7 +31,9 @@ func AICategories(ctx context.Context, txs []models.Transaction, existingCategor
 	catsHint := ""
 	if len(existingCategories) > 0 {
 		catsHint = fmt.Sprintf(
-			"Prefer these known categories where they fit (create new ones if needed): %s.\n\n",
+			"The user already uses these categories — reuse one whenever a transaction fits, matching its exact "+
+				"spelling. Only invent a new category when none of these fit, and if you do, match their language "+
+				"and style (e.g. if the existing ones are German, don't switch to English): %s.\n\n",
 			strings.Join(existingCategories, ", "),
 		)
 	}

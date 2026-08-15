@@ -97,6 +97,7 @@ budgetctl mcp                                        Start MCP server (stdio)
 | `budgetctl tag PATTERN --category NAME` | Create a rule: any transaction whose description contains PATTERN (case-insensitive) gets assigned NAME. |
 | `budgetctl tag PATTERN --category NAME --apply` | Create the rule and immediately apply it to all existing transactions. |
 | `budgetctl apply-rules` | Re-run all category rules against all transactions in the database. Useful after importing new data without `--apply`. |
+| `budgetctl category rename OLD NEW` | Rename a category everywhere — transactions, rules, and goals. Merges into NEW if it already exists (e.g. cleaning up an AI-invented "Insurance" into your existing "Versicherung"). |
 
 AI categorization (Anthropic/OpenAI/Gemini/local Ollama, via `--ai` on import or `a` in the TUI) is a missionctl Bundle feature — get it at [missionctl.sh/#pricing](https://missionctl.sh/#pricing), then `budgetctl license activate <key>`. Without a license, both fall back to rule-based categorization only.
 
@@ -260,7 +261,7 @@ Shows a full-month overview:
 | `e` | Edit selected entry |
 | `d` | Delete selected entry (asks to confirm) |
 | `u` | Undo last delete |
-| `c` | Set category for selected entry, then optionally save it as a rule (e.g. `RCIAT` → `Auto Finanzierung`) that's applied to every matching transaction, past and future |
+| `c` | Set category for selected entry, then optionally save it as a rule (e.g. `RCIAT` → `Auto Finanzierung`) that's applied to every matching transaction, past and future. Type `Cat1;Cat2` instead to split the amount evenly across two or more categories |
 | `a` | AI-categorize all uncategorized entries (missionctl Bundle feature) |
 | `v` | Select mode — batch-categorize multiple entries (space to toggle, `A` for all, `c` to apply) |
 | `i` | Import a CSV file |

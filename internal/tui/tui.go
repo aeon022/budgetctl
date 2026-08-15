@@ -296,7 +296,7 @@ func New() Model {
 	pi.Placeholder = "command…"
 	pi.CharLimit = 40
 	ci := textinput.New()
-	ci.Placeholder = "category…"
+	ci.Placeholder = "category… (or Cat1;Cat2 to split evenly)"
 	ci.CharLimit = 60
 	gi := textinput.New()
 	gi.Placeholder = "category amount, e.g. Dining 200"
@@ -1397,6 +1397,13 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// Clearing the category — nothing to turn into a rule.
 				return m, batchSetCategoryCmd(ids, cat)
 			}
+			if cats := splitCategories(cat); len(cats) > 1 {
+				// "Auto;Business" — split each transaction's amount evenly
+				// across the given categories. No rule-prompt here: a
+				// CategoryRule maps one pattern to one category, a split
+				// doesn't fit that shape.
+				return m, splitCategoryCmd(ids, cats)
+			}
 			m.pendingCatIDs = ids
 			m.pendingCat = cat
 			m.savingRule = true
@@ -1901,6 +1908,39 @@ func batchSetCategoryCmd(ids []string, category string) tea.Cmd {
 		var lastErr error
 		for _, id := range ids {
 			if err := s.SetCategory(ctx, id, category); err != nil {
+				lastErr = err
+			}
+		}
+		return txSavedMsg{lastErr}
+	}
+}
+
+// splitCategories parses a ";"-separated quick-categorize input like
+// "Auto ; Business" into trimmed, non-empty category names.
+func splitCategories(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ";") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// splitCategoryCmd divides each transaction's amount evenly across the
+// given categories (see store.SetSplits) — the "Auto;Business" case at the
+// quick-categorize prompt.
+func splitCategoryCmd(ids []string, categories []string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath(), config.Shared())
+		if err != nil {
+			return txSavedMsg{err}
+		}
+		defer s.Close()
+		ctx := context.Background()
+		var lastErr error
+		for _, id := range ids {
+			if err := s.SetSplits(ctx, id, categories); err != nil {
 				lastErr = err
 			}
 		}
@@ -2638,7 +2678,7 @@ func (m Model) helpContent() string {
 		Row("i", "import CSV (N26, ING, DKB, generic) — t at preview: tag account").
 		Row("e", "edit selected entry").
 		Row("d", "delete entry (asks to confirm)").
-		Row("c", "set category for selected entry — then offers to save it as a rule (pattern -> category) applied to every matching transaction").
+		Row("c", "set category for selected entry — then offers to save it as a rule (pattern -> category) applied to every matching transaction. Type \"Cat1;Cat2\" to split the amount evenly across categories instead").
 		Row("a", "AI-categorize all uncategorized entries (missionctl Bundle feature)").
 		Section("Data").
 		Row("/", "search transactions (esc clears)").

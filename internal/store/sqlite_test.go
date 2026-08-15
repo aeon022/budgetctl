@@ -216,6 +216,114 @@ func TestSetCategoryAndSummary(t *testing.T) {
 	}
 }
 
+func TestSetSplitsAndSummary(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.Upsert(ctx, tx("t1", -100)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetSplits(ctx, "t1", []string{"Auto", "Business"}); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := s.Summary(ctx, "2026-07", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ByCategory["Auto"] != -50 || sum.ByCategory["Business"] != -50 {
+		t.Errorf("split category totals wrong: %+v", sum.ByCategory)
+	}
+	if sum.Expenses != -100 {
+		t.Errorf("split shouldn't double-count total expenses: %v", sum.Expenses)
+	}
+	if _, ok := sum.ByCategory["Auto;Business"]; ok {
+		t.Error("the joined display label leaked into category totals — split tx must not also count under its own category column")
+	}
+
+	got, err := s.List(ctx, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Category != "Auto;Business" {
+		t.Errorf("list display label = %q, want \"Auto;Business\"", got[0].Category)
+	}
+
+	// Re-categorizing to a single category must clear the split, or its
+	// stale rows would keep contributing to Summary alongside the new one.
+	if err := s.SetCategory(ctx, "t1", "Auto"); err != nil {
+		t.Fatal(err)
+	}
+	sum, err = s.Summary(ctx, "2026-07", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ByCategory["Auto"] != -100 {
+		t.Errorf("category total after un-splitting = %v, want -100", sum.ByCategory["Auto"])
+	}
+	if _, ok := sum.ByCategory["Business"]; ok {
+		t.Error("stale split row for Business still contributing after SetCategory")
+	}
+}
+
+func TestRenameCategory(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.Upsert(ctx, tx("t1", -20)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(ctx, tx("t2", -80)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCategory(ctx, "t1", "Insurance"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSplits(ctx, "t2", []string{"Insurance", "Auto"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveGoal(ctx, "Insurance", 50); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRule(ctx, "uniqa", "Insurance"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.RenameCategory(ctx, "Insurance", "Versicherung"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.List(ctx, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]string{}
+	for _, t := range got {
+		byID[t.ID] = t.Category
+	}
+	if byID["t1"] != "Versicherung" {
+		t.Errorf("t1 category = %q, want Versicherung", byID["t1"])
+	}
+	if byID["t2"] != "Versicherung;Auto" {
+		t.Errorf("t2 split label = %q, want \"Versicherung;Auto\" (rebuilt from renamed split rows)", byID["t2"])
+	}
+
+	goals, err := s.ListGoals(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(goals) != 1 || goals[0].Category != "versicherung" || goals[0].Monthly != 50 {
+		t.Errorf("goals after rename = %+v, want one 'versicherung' goal at 50", goals)
+	}
+
+	rules, err := s.ListRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 || rules[0].Category != "Versicherung" {
+		t.Errorf("rules after rename = %+v, want category Versicherung", rules)
+	}
+}
+
 func TestSummaryMixedSignsWithinOneCategoryAreNotNetted(t *testing.T) {
 	// Regression test: category-level netting (GROUP BY category, then
 	// classify the NET as income-or-expense) silently swallowed income
