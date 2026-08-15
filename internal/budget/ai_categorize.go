@@ -42,7 +42,7 @@ func AICategories(ctx context.Context, txs []models.Transaction, existingCategor
 		return nil, err
 	}
 
-	text, err := coreai.Call(ctx, info, categorizeSystemPrompt, prompt, nil)
+	text, err := coreai.CallJSON(ctx, info, categorizeSystemPrompt, prompt)
 	if err != nil {
 		return nil, err
 	}
