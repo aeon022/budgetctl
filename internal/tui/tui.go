@@ -447,6 +447,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp = viewport.New(msg.Width, m.height-6)
 
 	case txLoadedMsg:
+		// Init() loads with an empty month filter (months aren't known yet
+		// to scope it to "the current one") — that unfiltered first load
+		// shows every transaction ever recorded, while the month tab bar
+		// already highlights activeTab 0 as if it were scoped. The first
+		// action that reloads data (categorize, goal, import, ...) always
+		// passes activeMonth() instead, which now resolves to a real month
+		// and narrows the list down — looking like transactions had
+		// vanished, when really the initial screen was just never scoped
+		// to begin with. Re-scope immediately once the month list is known
+		// instead of waiting for the user to trigger that reload themselves.
+		firstLoad := len(m.months) == 0 && len(msg.months) > 0
+
 		m.allTxs = msg.txs
 		m.txs = filterTxs(m.allTxs, m.searchQ)
 		m.summary = msg.sum
@@ -466,6 +478,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.view == viewSummary && m.summary != nil {
 			m.vp.SetContent(renderSummary(m.summary, m.goals, m.trend, m.recurring, m.width))
+		}
+		if firstLoad {
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 
 	case searchLoadedMsg:

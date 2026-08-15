@@ -736,6 +736,44 @@ func TestImportAssistant_AccountTagAppliedOnImport(t *testing.T) {
 	}
 }
 
+func TestTxLoadedMsg_FirstLoadRescopesToActiveMonth(t *testing.T) {
+	// Regression test: Init() loads with an empty month filter since months
+	// aren't known yet — that unfiltered first load put every transaction
+	// ever recorded into m.allTxs while the month tab bar already
+	// highlighted activeTab 0. Any later reload (categorize, goal, ...)
+	// passes activeMonth() instead, silently narrowing the list and making
+	// it look like transactions had disappeared. The fix: once the month
+	// list becomes known from that first load, immediately fire a
+	// follow-up load scoped to activeMonth() — verify that happens exactly
+	// once, not on every subsequent load (which would infinite-loop).
+	m := Model{width: 100, height: 30, activeTab: 0}
+
+	tm, cmd := m.Update(txLoadedMsg{
+		txs:    []models.Transaction{{ID: "a", Date: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)}},
+		months: []string{"2026-07", "2026-06"},
+		sum:    &models.Summary{},
+	})
+	m = tm.(Model)
+	if cmd == nil {
+		t.Fatal("first load (months previously unknown) should trigger a follow-up scoped reload, got nil cmd")
+	}
+	if len(m.months) != 2 {
+		t.Fatalf("months not set from first load: %+v", m.months)
+	}
+
+	// Simulate that follow-up load's result arriving — months unchanged,
+	// since it's the same store, just re-queried with a month filter now.
+	tm, cmd = m.Update(txLoadedMsg{
+		txs:    []models.Transaction{{ID: "a", Date: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)}},
+		months: []string{"2026-07", "2026-06"},
+		sum:    &models.Summary{},
+	})
+	_ = tm.(Model)
+	if cmd != nil {
+		t.Error("second load (months already known) re-triggered a reload — infinite loop risk")
+	}
+}
+
 func TestRenderList_LineCountMatchesHeightExactly(t *testing.T) {
 	// Regression test: renderList used to emit m.height+1 lines (listH's
 	// budget only reserved 1 row for the trailing status bar, missing the
