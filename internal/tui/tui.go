@@ -130,6 +130,14 @@ type aiCategorizedMsg struct {
 	count int
 	err   error
 }
+
+// aiCategorizeProgressMsg reports one chunk done, with more still queued —
+// see aiCategorizeStepCmd.
+type aiCategorizeProgressMsg struct {
+	remaining          []models.Transaction
+	existingCategories []string
+	done, total        int
+}
 type importParsedMsg struct {
 	txs []models.Transaction
 	err error
@@ -466,6 +474,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus("goal saved")
 			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
+
+	case aiCategorizeProgressMsg:
+		m.setStatus(fmt.Sprintf("Categorizing via AI… %d/%d", msg.done, msg.total))
+		return m, aiCategorizeStepCmd(msg.remaining, msg.existingCategories, msg.done, msg.total)
 
 	case aiCategorizedMsg:
 		switch {
@@ -1708,8 +1720,18 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus("AI categorize is a missionctl Bundle feature — missionctl.sh/#pricing")
 			return m, nil
 		}
-		m.setStatus("Categorizing via AI…")
-		return m, aiCategorizeCmd(m.allTxs, m.categories)
+		var uncategorized []models.Transaction
+		for _, t := range m.allTxs {
+			if strings.TrimSpace(t.Category) == "" {
+				uncategorized = append(uncategorized, t)
+			}
+		}
+		if len(uncategorized) == 0 {
+			m.setStatus("nothing to categorize")
+			return m, nil
+		}
+		m.setStatus(fmt.Sprintf("Categorizing via AI… 0/%d", len(uncategorized)))
+		return m, aiCategorizeStepCmd(uncategorized, m.categories, 0, len(uncategorized))
 	case "esc":
 		switch {
 		case m.searchQ != "":
@@ -1993,42 +2015,47 @@ func goalSetCmd(category string, amount float64) tea.Cmd {
 	}
 }
 
-// aiCategorizeCmd sends every currently-uncategorized transaction to the AI
-// provider (same budget.AICategories used by `import --ai`) and writes back
-// whatever categories it returns.
-func aiCategorizeCmd(txs []models.Transaction, existingCategories []string) tea.Cmd {
+// aiCategorizeStepCmd processes one AICategorizeBatchSize-sized chunk of
+// remaining (already filtered to uncategorized) transactions and writes
+// back whatever categories it returns, then either reports a chunk-progress
+// message (more left) or a final result (done or errored). Driven one chunk
+// at a time — rather than handing the whole list to budget.AICategories in
+// a single call — so the TUI status bar can show "n/total" instead of
+// sitting on a static "Categorizing…" for however long the full batch
+// takes; each returned aiCategorizeProgressMsg re-triggers this for the
+// next chunk (see the Update() case for it).
+func aiCategorizeStepCmd(remaining []models.Transaction, existingCategories []string, done, total int) tea.Cmd {
 	return func() tea.Msg {
-		var uncategorized []models.Transaction
-		for _, t := range txs {
-			if strings.TrimSpace(t.Category) == "" {
-				uncategorized = append(uncategorized, t)
-			}
+		if len(remaining) == 0 {
+			return aiCategorizedMsg{count: done}
 		}
-		if len(uncategorized) == 0 {
-			return aiCategorizedMsg{}
+		size := budget.AICategorizeBatchSize
+		if size > len(remaining) {
+			size = len(remaining)
 		}
+		chunk, rest := remaining[:size], remaining[size:]
 
-		// result may be non-empty even when err != nil (AICategories returns
-		// whatever earlier batches succeeded before a later one failed) —
-		// keep whatever categorization did succeed instead of discarding it.
-		result, aiErr := budget.AICategories(context.Background(), uncategorized, existingCategories)
+		result, aiErr := budget.AICategories(context.Background(), chunk, existingCategories)
 
 		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
-			return aiCategorizedMsg{err: err}
+			return aiCategorizedMsg{count: done, err: err}
 		}
 		defer s.Close()
 
 		ctx := context.Background()
-		count := 0
-		for _, t := range uncategorized {
+		newDone := done
+		for _, t := range chunk {
 			if cat, ok := result[t.Description]; ok && cat != "" {
 				if err := s.SetCategory(ctx, t.ID, cat); err == nil {
-					count++
+					newDone++
 				}
 			}
 		}
-		return aiCategorizedMsg{count: count, err: aiErr}
+		if aiErr != nil {
+			return aiCategorizedMsg{count: newDone, err: aiErr}
+		}
+		return aiCategorizeProgressMsg{remaining: rest, existingCategories: existingCategories, done: newDone, total: total}
 	}
 }
 
