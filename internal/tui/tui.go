@@ -468,11 +468,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case aiCategorizedMsg:
-		if msg.err != nil {
+		switch {
+		case msg.count > 0 && msg.err != nil:
+			// Partial success — some batches went through before a later
+			// one failed. Keep what worked, still surface the failure.
+			m.err = fmt.Errorf("AI-categorized %d before failing: %w", msg.count, msg.err)
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		case msg.err != nil:
 			m.err = msg.err
-		} else if msg.count == 0 {
+		case msg.count == 0:
 			m.setStatus("nothing to categorize")
-		} else {
+		default:
 			m.setStatus(fmt.Sprintf("AI-categorized %d transaction(s)", msg.count))
 			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
@@ -2002,10 +2008,10 @@ func aiCategorizeCmd(txs []models.Transaction, existingCategories []string) tea.
 			return aiCategorizedMsg{}
 		}
 
-		result, err := budget.AICategories(context.Background(), uncategorized, existingCategories)
-		if err != nil {
-			return aiCategorizedMsg{err: err}
-		}
+		// result may be non-empty even when err != nil (AICategories returns
+		// whatever earlier batches succeeded before a later one failed) —
+		// keep whatever categorization did succeed instead of discarding it.
+		result, aiErr := budget.AICategories(context.Background(), uncategorized, existingCategories)
 
 		s, err := store.New(config.DBPath(), config.Shared())
 		if err != nil {
@@ -2022,7 +2028,7 @@ func aiCategorizeCmd(txs []models.Transaction, existingCategories []string) tea.
 				}
 			}
 		}
-		return aiCategorizedMsg{count: count}
+		return aiCategorizedMsg{count: count, err: aiErr}
 	}
 }
 

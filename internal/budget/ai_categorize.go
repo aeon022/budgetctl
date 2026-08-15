@@ -38,13 +38,42 @@ func categorizeSystemPrompt(lang string) string {
 	)
 }
 
+// aiCategorizeBatchSize caps how many transactions go into a single AI
+// call. Measured against a local Ollama model: 20 transactions in one
+// request finished in ~7s; 138 in one request didn't finish inside 2
+// minutes and, in real use, came back with a hallucinated response shape
+// instead of the requested flat map. Local models apparently degrade far
+// worse than linearly as the prompt/output grows, so batching is a
+// correctness fix as much as a speed one, not just a nicety.
+const aiCategorizeBatchSize = 20
+
 // AICategories sends uncategorized transactions to the configured AI
 // provider (Anthropic/OpenAI/Gemini/local Ollama — see
 // missionctl-core/ai) and returns a map of description → category.
-// Existing category names are passed as hints.
+// Existing category names are passed as hints. Internally chunks large
+// batches (see aiCategorizeBatchSize) — on a chunk failure, returns
+// whatever earlier chunks already succeeded alongside the error, so one bad
+// chunk doesn't throw away otherwise-good categorizations.
 func AICategories(ctx context.Context, txs []models.Transaction, existingCategories []string) (map[string]string, error) {
 	if len(txs) == 0 {
 		return nil, nil
+	}
+	if len(txs) > aiCategorizeBatchSize {
+		result := make(map[string]string, len(txs))
+		for i := 0; i < len(txs); i += aiCategorizeBatchSize {
+			end := i + aiCategorizeBatchSize
+			if end > len(txs) {
+				end = len(txs)
+			}
+			batch, err := AICategories(ctx, txs[i:end], existingCategories)
+			for k, v := range batch {
+				result[k] = v
+			}
+			if err != nil {
+				return result, fmt.Errorf("categorized %d/%d before failing: %w", len(result), len(txs), err)
+			}
+		}
+		return result, nil
 	}
 
 	var descLines []string
