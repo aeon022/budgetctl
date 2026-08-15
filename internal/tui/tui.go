@@ -2861,13 +2861,19 @@ func (m Model) renderList() string {
 		bar = styleErr.Render("✗ " + m.err.Error())
 	} else if m.status != "" {
 		bar = styleOK.Render("✓ " + m.status)
-	} else if w < 150 {
-		// full legend is 139 cols — wider than most terminals, where it wraps
-		// and mangles the divider/net line below it. Below that width, show
-		// only the everyday keys and point to "?" for the rest.
-		bar = styleHelp.Render("enter:details  n:new  a:ai-categorize  s:summary  /:search  ?:help  q:quit")
 	} else {
-		bar = styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  u:undo  c:categorize  a:ai-categorize  v:select  s:summary  /:search  f:filter  tab:month  y:year  ]:account  ?:help  q:quit")
+		fullBar := styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  u:undo  c:categorize  a:ai-categorize  v:select  s:summary  /:search  f:filter  :cmd  tab:month  y:year  [/]:account  ?:help  q:quit")
+		// Compared against the bar's own rendered width, not a hardcoded
+		// terminal-width guess — a hardcoded number silently goes stale
+		// (drifted 139 -> 174 actual cols as keys were added over time,
+		// meaning the "wide" bar was overflowing well before the old
+		// w < 150 check ever kicked in). Below that width, show only the
+		// everyday keys and point to "?" for the rest.
+		if lipgloss.Width(fullBar) > rowW {
+			bar = styleHelp.Render("enter:details  n:new  a:ai-categorize  s:summary  /:search  ?:help  q:quit")
+		} else {
+			bar = fullBar
+		}
 	}
 	right := netStr + posStr
 	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
@@ -2961,7 +2967,7 @@ func (m Model) openHelp() Model {
 		popW = 40
 	}
 
-	vp := viewport.New(popW-4, popH-3) // border 1+1, padding(0,1) → 2 cols; -1 row for footer
+	vp := viewport.New(popW-4, popH-4) // border 1+1, padding(0,1) → 2 cols; -1 row for footer, -1 blank spacer above it
 	vp.SetContent(m.helpContent())
 
 	m.helpVP = vp
@@ -2981,7 +2987,7 @@ func (m Model) renderHelpPopup() string {
 	if m.helpVP.TotalLineCount() > m.helpVP.Height {
 		footer = fmt.Sprintf("j/k scroll (%d%%)  ·  %s", int(m.helpVP.ScrollPercent()*100), footer)
 	}
-	body := m.helpVP.View() + "\n" + styleHelp.Render(footer)
+	body := m.helpVP.View() + "\n\n" + styleHelp.Render(footer)
 	return stylePopupBorder.Width(m.helpPopW).Render(body)
 }
 
