@@ -33,15 +33,16 @@ import (
 type view int
 
 const (
-	viewList         view = iota
-	viewSummary      view = iota
-	viewHelp         view = iota
-	viewForm         view = iota
-	viewImport       view = iota
-	viewDetail       view = iota
-	viewCategoryPick view = iota
-	viewSettings     view = iota
-	viewProfiles     view = iota
+	viewList              view = iota
+	viewSummary           view = iota
+	viewHelp              view = iota
+	viewForm              view = iota
+	viewImport            view = iota
+	viewDetail            view = iota
+	viewCategoryPick      view = iota
+	viewSettings          view = iota
+	viewProfiles          view = iota
+	viewCategoryTranslate view = iota
 )
 
 // ── Import assistant steps ──────────────────────────────────────────────────
@@ -138,6 +139,20 @@ type aiCategorizeProgressMsg struct {
 	existingCategories []string
 	done, total        int
 }
+
+// categoryRename is one AI-suggested old->new category name pair, shown for
+// review in the "t" (translate) popup before any of it is applied.
+type categoryRename struct{ Old, New string }
+
+type categoryTranslatedMsg struct {
+	suggestions []categoryRename
+	err         error
+}
+
+type categoryRenamesAppliedMsg struct {
+	count int
+	err   error
+}
 type importParsedMsg struct {
 	txs []models.Transaction
 	err error
@@ -188,6 +203,14 @@ type Model struct {
 	categoryFilter     string   // active filter; "" = all categories
 	categoryPickInput  textinput.Model
 	categoryPickCursor int
+
+	// category translate ("t" in summary, viewCategoryTranslate) — AI-suggested
+	// renames for categories that don't match the categorization language
+	translateSuggestions []categoryRename
+	translateSelected    map[int]bool // index into translateSuggestions
+	translateCursor      int
+	translateLoading     bool
+	translateErr         error
 
 	// add/edit form
 	form    [fCount]textinput.Model
@@ -475,6 +498,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 		}
 
+	case categoryTranslatedMsg:
+		m.translateLoading = false
+		m.translateErr = msg.err
+		m.translateSuggestions = msg.suggestions
+		m.translateSelected = make(map[int]bool, len(msg.suggestions))
+		for i := range msg.suggestions {
+			m.translateSelected[i] = true // opt-out, not opt-in — reviewing and deselecting a bad suggestion is one keystroke, same as accepting a good one
+		}
+		m.translateCursor = 0
+		return m, nil
+
+	case categoryRenamesAppliedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			label := "categories"
+			if msg.count == 1 {
+				label = "category"
+			}
+			m.setStatus(fmt.Sprintf("Renamed %d %s", msg.count, label))
+		}
+		m.view = viewSummary
+		return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+
 	case aiCategorizeProgressMsg:
 		m.setStatus(fmt.Sprintf("Categorizing via AI… %d/%d", msg.done, msg.total))
 		return m, aiCategorizeStepCmd(msg.remaining, msg.existingCategories, msg.done, msg.total)
@@ -655,6 +702,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSettings(msg)
 		case viewProfiles:
 			return m.updateProfiles(msg)
+		case viewCategoryTranslate:
+			return m.updateCategoryTranslate(msg)
 		}
 	}
 
@@ -793,6 +842,95 @@ func (m Model) renderCategoryPickPopup() string {
 		b.WriteString("\n" + styleMuted.Render("  (no categorized transactions yet)") + "\n")
 	}
 	b.WriteString("\n" + styleMuted.Render("↑/↓ navigate  ·  enter: apply  ·  esc: cancel"))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Width(w).
+		Render(b.String())
+}
+
+// updateCategoryTranslate handles the "t" (summary view) AI-suggested
+// category-rename popup: navigate + toggle which suggestions to keep,
+// enter applies the selected ones, esc cancels without changing anything.
+func (m Model) updateCategoryTranslate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.view = viewSummary
+		return m, nil
+	case "up", "k":
+		if m.translateCursor > 0 {
+			m.translateCursor--
+		}
+	case "down", "j":
+		if m.translateCursor < len(m.translateSuggestions)-1 {
+			m.translateCursor++
+		}
+	case " ":
+		if m.translateCursor < len(m.translateSuggestions) {
+			m.translateSelected[m.translateCursor] = !m.translateSelected[m.translateCursor]
+		}
+	case "A":
+		for i := range m.translateSuggestions {
+			m.translateSelected[i] = true
+		}
+	case "enter":
+		var chosen []categoryRename
+		for i, r := range m.translateSuggestions {
+			if m.translateSelected[i] {
+				chosen = append(chosen, r)
+			}
+		}
+		if len(chosen) == 0 {
+			m.view = viewSummary
+			return m, nil
+		}
+		return m, applyCategoryRenamesCmd(chosen)
+	}
+	return m, nil
+}
+
+// renderCategoryTranslatePopup renders the "t" popup: a loading state while
+// the AI call is in flight, an error, or the reviewable list of suggested
+// renames — all selected by default (see categoryTranslatedMsg handling),
+// space to deselect one, "A" to reselect all, enter to apply what's checked.
+func (m Model) renderCategoryTranslatePopup() string {
+	w := m.importPopupWidth()
+	contentW := w - 6
+
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("Translate Categories (AI)") + "\n\n")
+
+	switch {
+	case m.translateLoading:
+		b.WriteString(styleMuted.Render("Asking AI which categories to rename…"))
+	case m.translateErr != nil:
+		b.WriteString(styleErr.Render("✗ " + m.translateErr.Error()))
+	case len(m.translateSuggestions) == 0:
+		b.WriteString(styleMuted.Render("Nothing to rename — every category already fits."))
+	default:
+		const maxRows = 12
+		for i, r := range m.translateSuggestions {
+			if i >= maxRows {
+				b.WriteString(styleMuted.Render(fmt.Sprintf("  … and %d more", len(m.translateSuggestions)-maxRows)) + "\n")
+				break
+			}
+			checkbox := "[ ]"
+			if m.translateSelected[i] {
+				checkbox = "[x]"
+			}
+			row := fmt.Sprintf("%s %s -> %s", checkbox, r.Old, r.New)
+			if i == m.translateCursor {
+				b.WriteString(styleSelected.Render(padRunes(truncRunes(row, contentW-2), contentW-2)) + "\n")
+			} else {
+				b.WriteString(styleHelp.Render(row) + "\n")
+			}
+		}
+		b.WriteString("\n" + styleMuted.Render("↑/↓ navigate  ·  space toggle  ·  A select all  ·  enter apply  ·  esc cancel"))
+	}
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -1783,6 +1921,16 @@ func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.settingGoal = true
 		m.goalInput.SetValue("")
 		return m, m.goalInput.Focus()
+	case "t":
+		if !config.IsPro() {
+			m.setStatus("AI category translate is a missionctl Bundle feature — missionctl.sh/#pricing")
+			return m, nil
+		}
+		m.translateLoading = true
+		m.translateSuggestions = nil
+		m.translateErr = nil
+		m.view = viewCategoryTranslate
+		return m, categoryTranslateCmd()
 	case "tab":
 		if len(m.months) > 0 {
 			m.activeTab = (m.activeTab + 1) % len(m.months)
@@ -2015,6 +2163,63 @@ func goalSetCmd(category string, amount float64) tea.Cmd {
 	}
 }
 
+// categoryTranslateCmd asks the AI which existing categories don't match
+// the categorization language (see budget.CategoryLanguage) and returns
+// suggested renames for review in the "t" popup — nothing is written yet.
+func categoryTranslateCmd() tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath(), config.Shared())
+		if err != nil {
+			return categoryTranslatedMsg{err: err}
+		}
+		defer s.Close()
+		ctx := context.Background()
+
+		categories, err := s.ListCategories(ctx)
+		if err != nil {
+			return categoryTranslatedMsg{err: err}
+		}
+		renames, err := budget.AITranslateCategories(ctx, categories, budget.CategoryLanguage())
+		if err != nil {
+			return categoryTranslatedMsg{err: err}
+		}
+
+		olds := make([]string, 0, len(renames))
+		for old := range renames {
+			olds = append(olds, old)
+		}
+		sort.Strings(olds)
+		suggestions := make([]categoryRename, 0, len(olds))
+		for _, old := range olds {
+			suggestions = append(suggestions, categoryRename{Old: old, New: renames[old]})
+		}
+		return categoryTranslatedMsg{suggestions: suggestions}
+	}
+}
+
+// applyCategoryRenamesCmd runs the given renames through the same
+// RenameCategory used by `budgetctl category rename` — transactions,
+// splits, rules, and goals all follow.
+func applyCategoryRenamesCmd(renames []categoryRename) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath(), config.Shared())
+		if err != nil {
+			return categoryRenamesAppliedMsg{err: err}
+		}
+		defer s.Close()
+		ctx := context.Background()
+
+		count := 0
+		for _, r := range renames {
+			if _, err := s.RenameCategory(ctx, r.Old, r.New); err != nil {
+				return categoryRenamesAppliedMsg{count: count, err: err}
+			}
+			count++
+		}
+		return categoryRenamesAppliedMsg{count: count}
+	}
+}
+
 // aiCategorizeStepCmd processes one AICategorizeBatchSize-sized chunk of
 // remaining (already filtered to uncategorized) transactions and writes
 // back whatever categories it returns, then either reports a chunk-progress
@@ -2082,6 +2287,8 @@ func (m Model) View() string {
 		return overlay.Center(m.renderList(), m.renderSettingsPopup(), m.width, m.height, 0)
 	case viewProfiles:
 		return overlay.Center(m.renderList(), m.renderProfilesPopup(), m.width, m.height, 0)
+	case viewCategoryTranslate:
+		return overlay.Center(m.renderSummaryView(), m.renderCategoryTranslatePopup(), m.width, m.height, 0)
 	default:
 		return m.renderList()
 	}
@@ -2719,6 +2926,7 @@ func (m Model) helpContent() string {
 		Row("f", "filter by category — fuzzy-searchable popup (esc clears)").
 		Row("s", "summary — categories, charts, budget goals").
 		Row("g", "(in summary) set a budget goal — \"category amount\"").
+		Row("t", "(in summary) AI-suggest category renames for language mismatches — review before applying").
 		Section("Accounts").
 		Text("No separate \"create account\" step — an account is just a text tag").
 		Text("on transactions. It appears the first time you tag something with it:").
@@ -2818,7 +3026,7 @@ func (m Model) renderSummaryView() string {
 	if m.vp.TotalLineCount() > m.vp.Height {
 		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
 	}
-	b.WriteString("\n  " + styleHelp.Render("esc:back  g:goal  tab:month  y:year  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
+	b.WriteString("\n  " + styleHelp.Render("esc:back  g:goal  t:translate  tab:month  y:year  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
 	return b.String()
 }
 
@@ -3330,4 +3538,3 @@ func sparkline(values []float64) string {
 	}
 	return b.String()
 }
-

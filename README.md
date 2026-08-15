@@ -290,6 +290,7 @@ Negative = expense, positive = income.
 |---|---|
 | `Esc` | Back to List view |
 | `g` | Set a budget goal — type `category amount`, e.g. `Dining 200` |
+| `t` | AI-suggest category renames for language mismatches — review each with space/A, enter to apply |
 | `Tab` / `Shift+Tab` | Next / previous month |
 | `y` / `Y` | Jump to next / previous year with data |
 | `[` / `]` | Cycle accounts |
