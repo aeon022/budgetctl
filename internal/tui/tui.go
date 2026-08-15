@@ -2794,7 +2794,7 @@ func (m Model) renderList() string {
 			styleHelp.Render("  space toggle  A all  c categorize  esc cancel") + "\n")
 	}
 
-	listH := m.height - m.listStartRow() - 3 // blank spacer + divider + trailing status bar
+	listH := m.height - m.listStartRow() - 4 // blank spacer + divider + 2-line key bar
 	if listH < 1 {
 		listH = 1
 	}
@@ -2853,35 +2853,39 @@ func (m Model) renderList() string {
 		posStr = styleMuted.Render(fmt.Sprintf(" %d/%d", m.cursor+1, len(m.txs)))
 	}
 
-	var bar string
-	if m.deleteTarget != nil {
-		bar = styleErr.Render(fmt.Sprintf("Delete %q (%+.2f€)?  ", m.deleteTarget.Description, m.deleteTarget.Amount)) +
-			styleHelp.Render("y confirm · any key cancel")
-	} else if m.err != nil {
-		bar = styleErr.Render("✗ " + m.err.Error())
-	} else if m.status != "" {
-		bar = styleOK.Render("✓ " + m.status)
-	} else {
-		fullBar := styleHelp.Render("enter:details  n:new  i:import  e:edit  d:delete  u:undo  c:categorize  a:ai-categorize  v:select  s:summary  /:search  f:filter  :cmd  tab:month  y:year  [/]:account  ?:help  q:quit")
-		// Compared against the bar's own rendered width, not a hardcoded
-		// terminal-width guess — a hardcoded number silently goes stale
-		// (drifted 139 -> 174 actual cols as keys were added over time,
-		// meaning the "wide" bar was overflowing well before the old
-		// w < 150 check ever kicked in). Below that width, show only the
-		// everyday keys and point to "?" for the rest.
-		if lipgloss.Width(fullBar) > rowW {
-			bar = styleHelp.Render("enter:details  n:new  a:ai-categorize  s:summary  /:search  ?:help  q:quit")
-		} else {
-			bar = fullBar
-		}
-	}
 	right := netStr + posStr
-	pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
+	b.WriteString("\n" + styleDivider.Render(strings.Repeat("─", w)) + "\n")
+
+	if m.deleteTarget != nil || m.err != nil || m.status != "" {
+		var bar string
+		switch {
+		case m.deleteTarget != nil:
+			bar = styleErr.Render(fmt.Sprintf("Delete %q (%+.2f€)?  ", m.deleteTarget.Description, m.deleteTarget.Amount)) +
+				styleHelp.Render("y confirm · any key cancel")
+		case m.err != nil:
+			bar = styleErr.Render("✗ " + m.err.Error())
+		default:
+			bar = styleOK.Render("✓ " + m.status)
+		}
+		pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
+		if pad < 0 {
+			pad = 0
+		}
+		b.WriteString("  " + bar + strings.Repeat(" ", pad) + right)
+		return b.String()
+	}
+
+	// Two fixed lines, same layout convention as the rest of the suite
+	// (notectl, mailctl, ...) rather than a single line that either
+	// overflows or falls back to a much shorter legend depending on
+	// terminal width.
+	line1 := styleHelp.Render("enter:details  n:new  e:edit  d:delete  u:undo  c:categorize  a:ai-categorize  v:select")
+	line2 := styleHelp.Render("i:import  s:summary  /:search  f:filter  :cmd  tab:month  y:year  [/]:account  ?:help  q:quit")
+	pad := rowW - lipgloss.Width(line2) - lipgloss.Width(right)
 	if pad < 0 {
 		pad = 0
 	}
-	b.WriteString("\n" + styleDivider.Render(strings.Repeat("─", w)) + "\n")
-	b.WriteString("  " + bar + strings.Repeat(" ", pad) + right)
+	b.WriteString("  " + line1 + "\n  " + line2 + strings.Repeat(" ", pad) + right)
 	return b.String()
 }
 

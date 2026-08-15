@@ -746,7 +746,11 @@ func TestRenderList_LineCountMatchesHeightExactly(t *testing.T) {
 	for i := 0; i < 84; i++ {
 		txs = append(txs, models.Transaction{Description: fmt.Sprintf("tx%d", i)})
 	}
-	for _, h := range []int{8, 15, 20, 30, 43} {
+	// Minimum height is 9, not 8: the key bar is now two lines (matching
+	// the rest of the suite's convention — notectl, mailctl, ...) instead
+	// of one, so the fixed header+footer chrome alone needs one more row
+	// before there's room for even a single transaction row.
+	for _, h := range []int{9, 15, 20, 30, 43} {
 		m := Model{width: 100, height: h, months: []string{"2026-07", "2026-06"}, txs: txs}
 		lines := strings.Split(m.renderList(), "\n")
 		if len(lines) != h {
