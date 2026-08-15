@@ -77,8 +77,8 @@ func TestCategoryLanguage(t *testing.T) {
 			t.Setenv("BUDGETCTL_CATEGORY_LANG", tt.override)
 			t.Setenv("LC_ALL", tt.lcAll)
 			t.Setenv("LANG", tt.lang)
-			if got := categoryLanguage(); got != tt.wantLanguage {
-				t.Errorf("categoryLanguage() = %q, want %q", got, tt.wantLanguage)
+			if got := CategoryLanguage(); got != tt.wantLanguage {
+				t.Errorf("CategoryLanguage() = %q, want %q", got, tt.wantLanguage)
 			}
 		})
 	}

@@ -47,6 +47,44 @@ func categorizeSystemPrompt(lang string) string {
 // correctness fix as much as a speed one, not just a nicety.
 const AICategorizeBatchSize = 20
 
+func translateCategoriesSystemPrompt(lang string) string {
+	return fmt.Sprintf(
+		"You help clean up a personal finance app's category list. The user categorizes in this language (ISO "+
+			"639-1 code): %s, but some existing category names may be left over from before that was enforced "+
+			"(e.g. named by an AI or import step in a different language). For every category that should be "+
+			"renamed to match, return it in a JSON object mapping the exact old name to a new name in %s.\n\n"+
+			"Leave out — do not include at all, not even mapped to itself — any category that's already fine: "+
+			"already in %s, a proper noun/brand/company name, or a loanword commonly used untranslated in that "+
+			"language (e.g. \"Shopping\" is normal in colloquial German, don't force it to \"Einkauf\").\n\n"+
+			"Return ONLY the JSON object. No markdown, no explanation.",
+		lang, lang, lang,
+	)
+}
+
+// AITranslateCategories asks the configured AI provider which of the user's
+// existing category names don't match their categorization language and
+// suggests renames for those — the one-shot version of manually running
+// `budgetctl category rename OLD NEW` for each mismatched category. Returns
+// a map of old name -> suggested new name; categories the AI considers
+// already fine (including proper nouns and common loanwords) are omitted
+// rather than mapped to themselves.
+func AITranslateCategories(ctx context.Context, categories []string, lang string) (map[string]string, error) {
+	if len(categories) == 0 {
+		return nil, nil
+	}
+	prompt := "Categories:\n" + strings.Join(categories, "\n")
+
+	info, err := coreai.Detect("BUDGETCTL")
+	if err != nil {
+		return nil, err
+	}
+	text, err := coreai.CallJSON(ctx, info, translateCategoriesSystemPrompt(lang), prompt)
+	if err != nil {
+		return nil, err
+	}
+	return parseCategoryResponse(text)
+}
+
 // AICategories sends uncategorized transactions to the configured AI
 // provider (Anthropic/OpenAI/Gemini/local Ollama — see
 // missionctl-core/ai) and returns a map of description → category.
@@ -81,7 +119,7 @@ func AICategories(ctx context.Context, txs []models.Transaction, existingCategor
 		descLines = append(descLines, tx.Description)
 	}
 
-	lang := categoryLanguage()
+	lang := CategoryLanguage()
 	catsHint := ""
 	if len(existingCategories) > 0 {
 		catsHint = fmt.Sprintf(
@@ -148,7 +186,7 @@ func parseCategoryResponse(text string) (map[string]string, error) {
 	return result, nil
 }
 
-// categoryLanguage picks the language new AI-invented category names should
+// CategoryLanguage picks the language new AI-invented category names should
 // use. Deliberately not inferred from existing category names — that just
 // mirrors whatever's already in the book, which is exactly the problem this
 // exists to fix: import/AI categorization run before this locale check
@@ -158,7 +196,7 @@ func parseCategoryResponse(text string) (map[string]string, error) {
 // match the language they categorize in; falls back to $LANG/$LC_ALL
 // (macOS/Linux locale strings look like "de_AT.UTF-8" — just the part
 // before "_" or "." is a valid ISO 639-1 code), then "en".
-func categoryLanguage() string {
+func CategoryLanguage() string {
 	if v := os.Getenv("BUDGETCTL_CATEGORY_LANG"); v != "" {
 		return v
 	}
