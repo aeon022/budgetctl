@@ -191,6 +191,12 @@ type Model struct {
 	catInput     textinput.Model
 	deleteTarget *models.Transaction
 
+	// "save as rule?" follow-up after quick categorize
+	savingRule    bool
+	ruleInput     textinput.Model
+	pendingCatIDs []string
+	pendingCat    string
+
 	// goal quick-set ("g" in summary view) — "<category> <amount>" in one line
 	settingGoal bool
 	goalInput   textinput.Model
@@ -295,7 +301,10 @@ func New() Model {
 	gi := textinput.New()
 	gi.Placeholder = "category amount, e.g. Dining 200"
 	gi.CharLimit = 60
-	return Model{searchInput: si, paletteInput: pi, catInput: ci, goalInput: gi, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
+	ri := textinput.New()
+	ri.Placeholder = "pattern, e.g. RCIAT — enter to save as a rule, esc to skip"
+	ri.CharLimit = 100
+	return Model{searchInput: si, paletteInput: pi, catInput: ci, goalInput: gi, ruleInput: ri, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
 }
 
 func newForm(t *models.Transaction) [fCount]textinput.Model {
@@ -1368,20 +1377,32 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.categorizing = false
 			m.catInput.Blur()
 			cat := strings.TrimSpace(m.catInput.Value())
+
+			var ids []string
+			prefill := ""
 			if m.selecting && len(m.selected) > 0 {
-				ids := make([]string, 0, len(m.selected))
 				for id := range m.selected {
 					ids = append(ids, id)
 				}
 				m.selecting = false
 				m.selected = nil
+			} else if len(m.txs) > 0 {
+				ids = []string{m.txs[m.cursor].ID}
+				prefill = m.txs[m.cursor].Description
+			}
+			if len(ids) == 0 {
+				return m, nil
+			}
+			if cat == "" {
+				// Clearing the category — nothing to turn into a rule.
 				return m, batchSetCategoryCmd(ids, cat)
 			}
-			if len(m.txs) > 0 {
-				id := m.txs[m.cursor].ID
-				return m, setCategoryCmd(id, cat)
-			}
-			return m, nil
+			m.pendingCatIDs = ids
+			m.pendingCat = cat
+			m.savingRule = true
+			m.ruleInput.SetValue(prefill)
+			m.ruleInput.CursorEnd()
+			return m, m.ruleInput.Focus()
 		case "esc":
 			m.categorizing = false
 			m.catInput.Blur()
@@ -1389,6 +1410,28 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.catInput, cmd = m.catInput.Update(msg)
+		return m, cmd
+	}
+
+	// "save as a rule?" follow-up after quick categorize — lets one manual
+	// category assignment (e.g. "RCIAT" -> "Auto Finanzierung") retroactively
+	// and automatically re-apply to every matching transaction, via the same
+	// tag/apply-rules mechanism `budgetctl tag` already exposes on the CLI.
+	if m.savingRule {
+		switch msg.String() {
+		case "enter", "esc":
+			m.savingRule = false
+			m.ruleInput.Blur()
+			pattern := ""
+			if msg.String() == "enter" {
+				pattern = strings.TrimSpace(m.ruleInput.Value())
+			}
+			ids, cat := m.pendingCatIDs, m.pendingCat
+			m.pendingCatIDs, m.pendingCat = nil, ""
+			return m, categorizeCmd(ids, cat, pattern)
+		}
+		var cmd tea.Cmd
+		m.ruleInput, cmd = m.ruleInput.Update(msg)
 		return m, cmd
 	}
 
@@ -1845,19 +1888,8 @@ func deleteTxCmd(id string) tea.Cmd {
 	}
 }
 
-func setCategoryCmd(id, category string) tea.Cmd {
-	return func() tea.Msg {
-		s, err := store.New(config.DBPath(), config.Shared())
-		if err != nil {
-			return txSavedMsg{err}
-		}
-		defer s.Close()
-		return txSavedMsg{s.SetCategory(context.Background(), id, category)}
-	}
-}
-
-// batchSetCategoryCmd is the batch-mode ("v") version of setCategoryCmd —
-// applies one category to every selected transaction.
+// batchSetCategoryCmd applies one category to every given transaction ID —
+// covers both the single quick-categorize ("c") case and batch mode ("v").
 func batchSetCategoryCmd(ids []string, category string) tea.Cmd {
 	return func() tea.Msg {
 		s, err := store.New(config.DBPath(), config.Shared())
@@ -1871,6 +1903,34 @@ func batchSetCategoryCmd(ids []string, category string) tea.Cmd {
 			if err := s.SetCategory(ctx, id, category); err != nil {
 				lastErr = err
 			}
+		}
+		return txSavedMsg{lastErr}
+	}
+}
+
+// categorizeCmd sets category on every given transaction ID and, if pattern
+// is non-empty, also saves it as a category rule and re-applies all rules —
+// the TUI equivalent of `budgetctl tag PATTERN --category NAME --apply`,
+// reached via the "save as rule?" prompt after quick-categorize ("c").
+func categorizeCmd(ids []string, category, pattern string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.New(config.DBPath(), config.Shared())
+		if err != nil {
+			return txSavedMsg{err}
+		}
+		defer s.Close()
+		ctx := context.Background()
+		var lastErr error
+		for _, id := range ids {
+			if err := s.SetCategory(ctx, id, category); err != nil {
+				lastErr = err
+			}
+		}
+		if lastErr == nil && pattern != "" {
+			if err := s.SaveRule(ctx, pattern, category); err != nil {
+				return txSavedMsg{err}
+			}
+			_, lastErr = s.ApplyRules(ctx)
 		}
 		return txSavedMsg{lastErr}
 	}
@@ -2223,6 +2283,9 @@ func (m Model) listStartRow() int {
 	if m.categorizing {
 		row++
 	}
+	if m.savingRule {
+		row++
+	}
 	return row
 }
 
@@ -2444,6 +2507,8 @@ func (m Model) renderList() string {
 	}
 	if m.categorizing {
 		b.WriteString("  " + styleCategory.Render("category: ") + m.catInput.View() + "\n")
+	} else if m.savingRule {
+		b.WriteString("  " + styleCategory.Render("save as rule? ") + m.ruleInput.View() + "\n")
 	} else if m.selecting {
 		b.WriteString("  " + styleSelected.Render(fmt.Sprintf("select: %d", len(m.selected))) +
 			styleHelp.Render("  space toggle  A all  c categorize  esc cancel") + "\n")
@@ -2573,7 +2638,7 @@ func (m Model) helpContent() string {
 		Row("i", "import CSV (N26, ING, DKB, generic) — t at preview: tag account").
 		Row("e", "edit selected entry").
 		Row("d", "delete entry (asks to confirm)").
-		Row("c", "set category for selected entry").
+		Row("c", "set category for selected entry — then offers to save it as a rule (pattern -> category) applied to every matching transaction").
 		Row("a", "AI-categorize all uncategorized entries (missionctl Bundle feature)").
 		Section("Data").
 		Row("/", "search transactions (esc clears)").

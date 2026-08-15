@@ -260,7 +260,7 @@ Shows a full-month overview:
 | `e` | Edit selected entry |
 | `d` | Delete selected entry (asks to confirm) |
 | `u` | Undo last delete |
-| `c` | Set category for selected entry |
+| `c` | Set category for selected entry, then optionally save it as a rule (e.g. `RCIAT` → `Auto Finanzierung`) that's applied to every matching transaction, past and future |
 | `a` | AI-categorize all uncategorized entries (missionctl Bundle feature) |
 | `v` | Select mode — batch-categorize multiple entries (space to toggle, `A` for all, `c` to apply) |
 | `i` | Import a CSV file |
