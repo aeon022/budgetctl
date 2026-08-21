@@ -365,7 +365,7 @@ func newForm(t *models.Transaction) [fCount]textinput.Model {
 
 func Run() error {
 	m := New()
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion(), tea.WithFPS(30))
 	_, err := p.Run()
 	return err
 }
@@ -443,7 +443,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.height = msg.Height
+		// -1, not msg.Height: reserves one row of slack so this app's own
+		// layout math never lands exactly on the real terminal height —
+		// avoids a long-standing bubbletea v1 quirk (charmbracelet/
+		// bubbletea#304) where View() output with exactly as many lines as
+		// the terminal and no trailing newline can fail to fully redraw.
+		m.height = msg.Height - 1
+		if m.height < 1 {
+			m.height = 1
+		}
 		m.vp = viewport.New(msg.Width, m.height-6)
 
 	case txLoadedMsg:
@@ -2884,7 +2892,14 @@ func (m Model) renderList() string {
 		}
 		pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
 		if pad < 0 {
-			pad = 0
+			// No room for both — drop right (net/position) rather than
+			// clamp padding to 0 and append it anyway, which would still
+			// overflow rowW.
+			right = ""
+			pad = rowW - lipgloss.Width(bar)
+			if pad < 0 {
+				pad = 0
+			}
 		}
 		b.WriteString("  " + bar + strings.Repeat(" ", pad) + right)
 		return b.String()
@@ -2898,7 +2913,13 @@ func (m Model) renderList() string {
 	line2 := styleHelp.Render("i:import  s:summary  /:search  f:filter  :cmd  tab:month  y:year  [/]:account  ?:help  q:quit")
 	pad := rowW - lipgloss.Width(line2) - lipgloss.Width(right)
 	if pad < 0 {
-		pad = 0
+		// No room for both — drop right (net/position) rather than clamp
+		// padding to 0 and append it anyway, which would still overflow rowW.
+		right = ""
+		pad = rowW - lipgloss.Width(line2)
+		if pad < 0 {
+			pad = 0
+		}
 	}
 	b.WriteString("  " + line1 + "\n  " + line2 + strings.Repeat(" ", pad) + right)
 	return b.String()
