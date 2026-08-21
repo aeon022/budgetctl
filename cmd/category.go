@@ -40,8 +40,7 @@ var categoryTranslateCmd = &cobra.Command{
 	Short: "AI-suggest renames for categories that don't match your categorization language (missionctl Bundle feature)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !config.IsPro() {
-			fmt.Println("AI category translate is a missionctl Bundle feature.")
-			fmt.Println("Get it at https://missionctl.sh/#pricing, then: budgetctl license activate <key>")
+			fmt.Println(config.ProFeatureMessage("AI category translate"))
 			return nil
 		}
 		apply, _ := cmd.Flags().GetBool("apply")

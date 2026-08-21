@@ -194,7 +194,7 @@ func MoveProfileDataDir(name, newDir string) (status string, err error) {
 		return fmt.Sprintf("Found an existing database at %s — now using it (previous data untouched at %s).", newResolvedDir, oldPath), nil
 	}
 	if _, err := os.Stat(oldPath); err == nil {
-		if err := moveDBFile(oldPath, newPath); err != nil {
+		if err := MoveDBFile(oldPath, newPath); err != nil {
 			return "", fmt.Errorf("moving existing database: %w", err)
 		}
 		_ = os.Remove(oldPath + ".lock")
@@ -215,11 +215,11 @@ func SetProfileDataDir(name, dir string) error {
 	return writeConfigFile()
 }
 
-// moveDBFile renames oldPath to newPath, falling back to copy-then-remove
+// MoveDBFile renames oldPath to newPath, falling back to copy-then-remove
 // if they're on different filesystems (os.Rename returns EXDEV) — a
 // folder-synced directory (iCloud Drive, Dropbox) is usually on the same
 // volume as $HOME, but not guaranteed.
-func moveDBFile(oldPath, newPath string) error {
+func MoveDBFile(oldPath, newPath string) error {
 	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
 		return err
 	}
@@ -320,6 +320,21 @@ const (
 func IsPro() bool {
 	result := licensing.Result{Status: LicenseStatus(), BenefitID: LicenseBenefitID()}
 	return result.Grants(budgetctlBenefitID, bundleBenefitID)
+}
+
+// Truncate shortens s to at most n bytes, replacing the last one with "…"
+// when it doesn't fit.
+func Truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
+// ProFeatureMessage returns the standard paywall message shown when a
+// missionctl Bundle feature is used without an active license.
+func ProFeatureMessage(feature string) string {
+	return fmt.Sprintf("%s is a missionctl Bundle feature.\nGet it at https://missionctl.sh/#pricing, then: budgetctl license activate <key>", feature)
 }
 
 func LicenseKey() string {

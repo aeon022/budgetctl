@@ -15,8 +15,7 @@ var recurringCmd = &cobra.Command{
 	Short: "Detect recurring payments (subscriptions, rent, utilities) — missionctl Bundle feature",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !config.IsPro() {
-			fmt.Println("Recurring-payment detection is a missionctl Bundle feature.")
-			fmt.Println("Get it at https://missionctl.sh/#pricing, then: budgetctl license activate <key>")
+			fmt.Println(config.ProFeatureMessage("Recurring-payment detection"))
 			return nil
 		}
 
@@ -44,7 +43,7 @@ var recurringCmd = &cobra.Command{
 				cat = "(uncategorized)"
 			}
 			fmt.Printf("  %-30s  %7.2f €  %-8s  %-18s  seen %dx  last: %s\n",
-				truncate(p.Description, 30),
+				config.Truncate(p.Description, 30),
 				p.Amount,
 				p.Frequency,
 				cat,
@@ -58,11 +57,4 @@ var recurringCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(recurringCmd)
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
 }

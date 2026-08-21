@@ -3,7 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
-	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1284,7 +1284,7 @@ func applyDataDirCmd(oldPath, newDir string) tea.Cmd {
 				"Found an existing database there — now using it (your previous local data is untouched at %s).", oldPath)}
 		}
 		if _, err := os.Stat(oldPath); err == nil {
-			if err := moveFile(oldPath, newPath); err != nil {
+			if err := config.MoveDBFile(oldPath, newPath); err != nil {
 				return settingsAppliedMsg{err: fmt.Errorf("moving existing database: %w", err)}
 			}
 			_ = os.Remove(oldPath + ".lock")
@@ -1292,36 +1292,6 @@ func applyDataDirCmd(oldPath, newDir string) tea.Cmd {
 		}
 		return settingsAppliedMsg{status: fmt.Sprintf("Now syncing new data to %s.", newDir)}
 	}
-}
-
-// moveFile renames oldPath to newPath, falling back to copy-then-remove
-// if they're on different filesystems (os.Rename returns EXDEV) — a
-// folder-synced directory (iCloud Drive, Dropbox) is usually on the same
-// volume as $HOME, but not guaranteed.
-func moveFile(oldPath, newPath string) error {
-	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.Rename(oldPath, newPath); err == nil {
-		return nil
-	}
-	src, err := os.Open(oldPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	dst, err := os.Create(newPath)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, src); err != nil {
-		return err
-	}
-	if err := dst.Close(); err != nil {
-		return err
-	}
-	return os.Remove(oldPath)
 }
 
 // profileDisplayNames returns "default" plus every configured profile, in
@@ -3143,7 +3113,7 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []model
 
 	maxAmt := 0.0
 	for _, item := range sorted {
-		if a := abs(item.v); a > maxAmt {
+		if a := math.Abs(item.v); a > maxAmt {
 			maxAmt = a
 		}
 	}
@@ -3157,7 +3127,7 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []model
 		amtStr := fmt.Sprintf("%+.2f €", item.v)
 		barLen := 0
 		if maxAmt > 0 {
-			barLen = int(abs(item.v) / maxAmt * float64(barW))
+			barLen = int(math.Abs(item.v) / maxAmt * float64(barW))
 		}
 		bar := ""
 		if item.v < 0 {
@@ -3536,13 +3506,6 @@ func sameDay(a, b time.Time) bool {
 	ay, am, ad := a.Date()
 	by, bm, bd := b.Date()
 	return ay == by && am == bm && ad == bd
-}
-
-func abs(f float64) float64 {
-	if f < 0 {
-		return -f
-	}
-	return f
 }
 
 // sparklineChars are the 8 block-height levels used by sparkline, low to high.

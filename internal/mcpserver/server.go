@@ -411,7 +411,7 @@ func toolDetectRecurring() mcp.Tool {
 
 func handleDetectRecurring(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if !config.IsPro() {
-		return mcp.NewToolResultText("Recurring-payment detection is a missionctl Bundle feature. Get it at https://missionctl.sh/#pricing, then: budgetctl license activate <key>"), nil
+		return mcp.NewToolResultText(config.ProFeatureMessage("Recurring-payment detection")), nil
 	}
 
 	s, err := store.New(config.DBPath(), config.Shared())
@@ -438,17 +438,10 @@ func handleDetectRecurring(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallT
 			cat = "(uncategorized)"
 		}
 		b.WriteString(fmt.Sprintf("%-30s  %.2f €/%-8s  %-18s  last: %s  seen %dx\n",
-			truncateStr(p.Description, 30), p.Amount, p.Frequency, cat,
+			config.Truncate(p.Description, 30), p.Amount, p.Frequency, cat,
 			p.LastSeen.Format("2006-01-02"), p.Count))
 	}
 	return mcp.NewToolResultText(b.String()), nil
-}
-
-func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
 }
 
 func handleApplyRules(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
