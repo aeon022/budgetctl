@@ -315,8 +315,8 @@ const (
 )
 
 // IsPro reports whether a valid Pro/Bundle or budgetctl-only license is
-// active on this machine — gates AI categorization and recurring-payment
-// detection.
+// active on this machine — gates AI categorization, recurring-payment
+// detection, and AI-suggested budget cuts.
 func IsPro() bool {
 	result := licensing.Result{Status: LicenseStatus(), BenefitID: LicenseBenefitID()}
 	return result.Grants(budgetctlBenefitID, bundleBenefitID)
