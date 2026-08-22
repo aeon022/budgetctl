@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/aeon022/budgetctl/internal/config"
@@ -13,13 +14,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ponytail: PDF export isn't implemented — no PDF dependency in go.mod, and
+// hand-rolling a real PDF isn't a few lines of code. Add a PDF library (e.g.
+// gofpdf) if a tax-report PDF is actually requested; CSV/JSON cover the data
+// for now and both round-trip cleanly into a spreadsheet or accountant tool.
+
 var exportCmd = &cobra.Command{
 	Use:   "export",
-	Short: "Export transactions to CSV or JSON (for tax reporting)",
+	Short: "Export transactions to CSV or JSON (for tax reporting); --summary for category totals",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		year, _ := cmd.Flags().GetInt("year")
 		format, _ := cmd.Flags().GetString("format")
 		output, _ := cmd.Flags().GetString("output")
+		summary, _ := cmd.Flags().GetBool("summary")
 
 		if year == 0 {
 			year = time.Now().Year()
@@ -39,6 +46,13 @@ var exportCmd = &cobra.Command{
 			Account     string
 		}
 
+		type catTotal struct {
+			Category string  `json:"category"`
+			Total    float64 `json:"total"`
+			Count    int     `json:"count"`
+		}
+		totals := make(map[string]*catTotal)
+
 		ctx := context.Background()
 		for m := 1; m <= 12; m++ {
 			month := fmt.Sprintf("%04d-%02d", year, m)
@@ -56,6 +70,13 @@ var exportCmd = &cobra.Command{
 					Category:    t.Category,
 					Account:     t.Account,
 				})
+				ct, ok := totals[t.Category]
+				if !ok {
+					ct = &catTotal{Category: t.Category}
+					totals[t.Category] = ct
+				}
+				ct.Total += t.Amount
+				ct.Count++
 			}
 		}
 
@@ -67,6 +88,39 @@ var exportCmd = &cobra.Command{
 			}
 			defer f.Close()
 			w = f
+		}
+
+		if summary {
+			// Same ordering as `budgetctl summary`: ascending by total, so the
+			// biggest expenses (most negative) sort to the top and income sits
+			// at the bottom.
+			rows := make([]*catTotal, 0, len(totals))
+			for _, ct := range totals {
+				rows = append(rows, ct)
+			}
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Total < rows[j].Total })
+
+			switch format {
+			case "json":
+				enc := json.NewEncoder(w)
+				enc.SetIndent("", "  ")
+				return enc.Encode(rows)
+			default: // csv
+				cw := csv.NewWriter(w)
+				_ = cw.Write([]string{"category", "total", "count"})
+				for _, ct := range rows {
+					cat := ct.Category
+					if cat == "" {
+						cat = "(uncategorized)"
+					}
+					_ = cw.Write([]string{cat, fmt.Sprintf("%.2f", ct.Total), fmt.Sprintf("%d", ct.Count)})
+				}
+				cw.Flush()
+				if output != "" {
+					fmt.Fprintf(os.Stderr, "Exported %d categories → %s\n", len(rows), output)
+				}
+				return cw.Error()
+			}
 		}
 
 		switch format {
@@ -94,4 +148,5 @@ func init() {
 	exportCmd.Flags().Int("year", 0, "Year to export (default: current year)")
 	exportCmd.Flags().String("format", "csv", "Output format: csv | json")
 	exportCmd.Flags().StringP("output", "o", "", "Output file (default: stdout)")
+	exportCmd.Flags().Bool("summary", false, "Output year totals per category instead of raw transactions")
 }
