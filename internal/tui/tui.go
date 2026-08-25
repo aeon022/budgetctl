@@ -2793,6 +2793,7 @@ func (m Model) renderList() string {
 	}
 
 	rowW := w - 2
+	preListLines := strings.Count(b.String(), "\n")
 	if len(m.txs) == 0 {
 		b.WriteString("\n" + styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
 	} else {
@@ -2830,6 +2831,12 @@ func (m Model) renderList() string {
 			}
 			b.WriteString("  " + checkbox + line + "\n")
 		}
+	}
+	// Pin the status bar to the bottom of the screen instead of letting it
+	// glue itself right under a short list — pad the list block out to its
+	// full line budget, same pattern taskctl/notectl use.
+	for written := strings.Count(b.String(), "\n") - preListLines; written < listH; written++ {
+		b.WriteString("\n")
 	}
 
 	// ── status bar ──
