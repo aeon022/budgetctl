@@ -9,14 +9,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/aeon022/budgetctl/internal/budget"
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
 	"github.com/aeon022/missionctl-core/palette"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func typeKeys(t *testing.T, m Model, keys ...string) (Model, tea.Cmd) {
@@ -27,13 +27,13 @@ func typeKeys(t *testing.T, m Model, keys ...string) (Model, tea.Cmd) {
 		var msg tea.Msg
 		switch k {
 		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
 		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
+			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
 		case "tab":
-			msg = tea.KeyMsg{Type: tea.KeyTab}
+			msg = tea.KeyPressMsg{Code: tea.KeyTab}
 		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+			msg = tea.KeyPressMsg{Text: k, Code: []rune(k)[0]}
 		}
 		tm, cmd = tm.Update(msg)
 	}
@@ -200,14 +200,14 @@ func TestCommandPalette_TypeFilterAndExecute(t *testing.T) {
 	m := New()
 	m.width, m.height = 100, 30
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	mi, _ := m.Update(tea.KeyPressMsg{Text: ":", Code: []rune(":")[0]})
 	m = mi.(Model)
 	if !m.inPalette {
 		t.Fatal("expected inPalette after ':'")
 	}
 
 	for _, r := range "sum" {
-		mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		mi, _ = m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
 		m = mi.(Model)
 	}
 	matches := palette.Match(paletteCommands, m.paletteInput.Value())
@@ -215,7 +215,7 @@ func TestCommandPalette_TypeFilterAndExecute(t *testing.T) {
 		t.Fatalf("expected 'summary' to be the top match for query %q, got %v", m.paletteInput.Value(), matches)
 	}
 
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.inPalette {
 		t.Error("expected palette to close after executing a command")
@@ -228,10 +228,10 @@ func TestCommandPalette_TypeFilterAndExecute(t *testing.T) {
 func TestCommandPalette_EscCloses(t *testing.T) {
 	m := New()
 	m.width, m.height = 100, 30
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	mi, _ := m.Update(tea.KeyPressMsg{Text: ":", Code: []rune(":")[0]})
 	m = mi.(Model)
 
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(Model)
 	if m.inPalette {
 		t.Error("expected esc to close the palette")
@@ -291,7 +291,7 @@ func splitLinesForTest(s string) []string {
 func TestTabHitTest_ClickSwitchesActiveMonth(t *testing.T) {
 	m := Model{width: 100, height: 20, months: []string{"2026-07", "2026-06", "2026-05"}, activeTab: 0}
 
-	mi, cmd := m.Update(tea.MouseMsg{X: 12, Y: 2, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	mi, cmd := m.Update(tea.MouseClickMsg{X: 12, Y: 2, Button: tea.MouseLeft})
 	m = mi.(Model)
 	if m.activeTab != 1 {
 		t.Errorf("expected click on second tab to switch activeTab to 1, got %d", m.activeTab)
@@ -303,7 +303,7 @@ func TestTabHitTest_ClickSwitchesActiveMonth(t *testing.T) {
 
 func TestTabHitTest_MissOutsideAnyTabDoesNothing(t *testing.T) {
 	m := Model{width: 100, height: 20, months: []string{"2026-07", "2026-06"}, activeTab: 0}
-	mi, _ := m.Update(tea.MouseMsg{X: 90, Y: 2, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	mi, _ := m.Update(tea.MouseClickMsg{X: 90, Y: 2, Button: tea.MouseLeft})
 	m = mi.(Model)
 	if m.activeTab != 0 {
 		t.Errorf("expected click past all tabs to leave activeTab unchanged, got %d", m.activeTab)
@@ -405,7 +405,7 @@ func TestYearJumpKeys_UpdateActiveTabAndReload(t *testing.T) {
 	months := manyMonths()
 	m := Model{width: 100, height: 20, months: months, activeTab: 17}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	mi, cmd := m.Update(tea.KeyPressMsg{Text: "y", Code: []rune("y")[0]})
 	m = mi.(Model)
 	if m.months[m.activeTab] != "2026-01" {
 		t.Errorf("expected 'y' to jump to 2026-01, activeTab now points to %q", m.months[m.activeTab])
@@ -414,7 +414,7 @@ func TestYearJumpKeys_UpdateActiveTabAndReload(t *testing.T) {
 		t.Error("expected 'y' to trigger a reload command")
 	}
 
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Y")})
+	mi, cmd = m.Update(tea.KeyPressMsg{Text: "Y", Code: []rune("Y")[0]})
 	m = mi.(Model)
 	if m.months[m.activeTab] != "2025-12" {
 		t.Errorf("expected 'Y' to jump back to 2025-12, activeTab now points to %q", m.months[m.activeTab])
@@ -431,7 +431,7 @@ func TestRowHitTest_ClickMovesCursorToThatTransaction(t *testing.T) {
 			{Description: "A"}, {Description: "B"}, {Description: "C"},
 		},
 	}
-	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	mi, _ := m.Update(tea.MouseClickMsg{X: 5, Y: 5, Button: tea.MouseLeft})
 	m = mi.(Model)
 	if m.cursor != 1 {
 		t.Errorf("expected click on second row to move cursor to 1, got %d", m.cursor)
@@ -443,7 +443,7 @@ func TestRowHitTest_ClickBelowListDoesNothing(t *testing.T) {
 		width: 100, height: 20,
 		txs: []models.Transaction{{Description: "A"}, {Description: "B"}},
 	}
-	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: 15, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	mi, _ := m.Update(tea.MouseClickMsg{X: 5, Y: 15, Button: tea.MouseLeft})
 	m = mi.(Model)
 	if m.cursor != 0 {
 		t.Errorf("expected click below the list to leave cursor unchanged, got %d", m.cursor)
@@ -470,7 +470,7 @@ func TestRowHitTest_RespectsScrollWindow(t *testing.T) {
 
 func TestImportAssistant_OpensToFilePicker(t *testing.T) {
 	m := Model{width: 100, height: 30}
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	mi, cmd := m.Update(tea.KeyPressMsg{Text: "i", Code: []rune("i")[0]})
 	m = mi.(Model)
 	if m.view != viewImport || m.importStep != importPickFile {
 		t.Fatalf("expected viewImport/importPickFile after 'i', got view=%v step=%v", m.view, m.importStep)
@@ -515,7 +515,7 @@ func TestImportAssistant_PreviewEscGoesBackToPicker(t *testing.T) {
 	m.importStep = importPreview
 	m.importParsed = []models.Transaction{{Description: "Rewe", Amount: -1}}
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(Model)
 	if m.importStep != importPickFile {
 		t.Errorf("expected esc at the preview step to return to the file picker, got %v", m.importStep)
@@ -528,7 +528,7 @@ func TestImportAssistant_PreviewAIToggle(t *testing.T) {
 	m.importStep = importPreview
 	before := m.importUseAI
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	mi, _ := m.Update(tea.KeyPressMsg{Text: "a", Code: []rune("a")[0]})
 	m = mi.(Model)
 	if m.importUseAI == before {
 		t.Error("expected 'a' to toggle importUseAI")
@@ -542,7 +542,7 @@ func TestImportAssistant_EnterAtPreviewStartsImport(t *testing.T) {
 	m.importParsed = []models.Transaction{{Description: "Rewe", Amount: -1}}
 	m.importPath = "/tmp/does-not-matter-for-this-test.csv"
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.importStep != importRunning {
 		t.Fatalf("expected importRunning after enter, got %v", m.importStep)
@@ -558,7 +558,7 @@ func TestImportAssistant_EnterAtPreviewWithNoRowsDoesNothing(t *testing.T) {
 	m.importStep = importPreview
 	m.importParsed = nil // e.g. a file that parsed to zero transactions
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.importStep != importPreview {
 		t.Errorf("expected enter with no parsed rows to stay on the preview, got %v", m.importStep)
@@ -576,7 +576,7 @@ func TestImportAssistant_DoneStepAnyKeyClosesAndRefreshesList(t *testing.T) {
 		t.Fatalf("expected importDone after the import command resolves, got %v", m.importStep)
 	}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.view != viewList {
 		t.Errorf("expected any key at the done step to close back to viewList, got %v", m.view)
@@ -609,7 +609,7 @@ func TestCycleAccount_WrapsThroughAllPlusEachAccount(t *testing.T) {
 func TestAccountTab_KeyCyclesActiveAccount(t *testing.T) {
 	m := Model{width: 100, height: 20, accounts: []string{"N26", "ING"}, activeAccount: -1}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	mi, cmd := m.Update(tea.KeyPressMsg{Text: "]", Code: []rune("]")[0]})
 	m = mi.(Model)
 	if m.activeAccount != 0 {
 		t.Errorf("expected ']' to move from All to account 0, got %d", m.activeAccount)
@@ -618,7 +618,7 @@ func TestAccountTab_KeyCyclesActiveAccount(t *testing.T) {
 		t.Error("expected a load command after cycling account")
 	}
 
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	mi, _ = m.Update(tea.KeyPressMsg{Text: "[", Code: []rune("[")[0]})
 	m = mi.(Model)
 	if m.activeAccount != -1 {
 		t.Errorf("expected '[' to move back to All, got %d", m.activeAccount)
@@ -631,7 +631,7 @@ func TestAccountTabHitTest_ClickSwitchesActiveAccount(t *testing.T) {
 	// account tab row is row 3 (title, rule, month tabs, account tabs);
 	// "All" occupies the leftmost columns, so a click near x=10 should hit it,
 	// and a click further right should hit "N26".
-	mi, cmd := m.Update(tea.MouseMsg{X: 10, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	mi, cmd := m.Update(tea.MouseClickMsg{X: 10, Y: 3, Button: tea.MouseLeft})
 	m = mi.(Model)
 	if m.activeAccount != 0 {
 		t.Errorf("expected click on second account tab to select account 0 (N26), got %d", m.activeAccount)
@@ -664,7 +664,7 @@ func TestAccountTabRow_HiddenWithNoAccounts(t *testing.T) {
 	if strings.Contains(m.renderList(), "All") {
 		t.Error("expected no account tab row (not even \"All\") with zero tagged accounts")
 	}
-	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	mi, _ := m.Update(tea.MouseClickMsg{X: 5, Y: 3, Button: tea.MouseLeft})
 	m = mi.(Model)
 	if m.activeAccount != -1 {
 		t.Errorf("expected a click on the (nonexistent) account-tab row to do nothing, activeAccount changed to %d", m.activeAccount)
@@ -850,8 +850,6 @@ func TestSparkline_ScalesToMinMax(t *testing.T) {
 }
 
 func TestSparkline_ColorsBySign(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	defer lipgloss.SetColorProfile(termenv.Ascii)
 
 	// Single-value slices avoid the min==max degenerate case ambiguity and
 	// make the expected spark char (the series midpoint, ▅) unambiguous.
@@ -920,7 +918,7 @@ func TestRenderSummary_SavingsInsightsNormalizesToMonthly(t *testing.T) {
 		{Description: "Netflix", Amount: 12, Frequency: "monthly"},
 		{Description: "Insurance", Amount: 120, Frequency: "annual"}, // → 10€/month
 	}
-	out := renderSummary(sum, nil, nil, recurring, 100)
+	out := ansi.Strip(renderSummary(sum, nil, nil, recurring, 100)) // v2 always emits ANSI
 	if !strings.Contains(out, "2 recurring payments ≈ 22.00 €/month") {
 		t.Errorf("expected annual payment normalized to 10€/month (total 22€), got:\n%s", out)
 	}
@@ -932,7 +930,7 @@ func TestDetailPopup_EnterOpensAndShowsFullDescription(t *testing.T) {
 		width: 100, height: 30,
 		txs: []models.Transaction{{Description: longDesc, Amount: -12.34, Account: "N26"}},
 	}
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.view != viewDetail {
 		t.Fatalf("expected 'enter' on a row to open viewDetail, got %v", m.view)
@@ -948,7 +946,7 @@ func TestDetailPopup_EnterOpensAndShowsFullDescription(t *testing.T) {
 
 func TestDetailPopup_EnterOnEmptyListDoesNothing(t *testing.T) {
 	m := Model{width: 100, height: 30}
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.view != viewList {
 		t.Errorf("expected 'enter' with no transactions to do nothing, got view=%v", m.view)
@@ -958,7 +956,7 @@ func TestDetailPopup_EnterOnEmptyListDoesNothing(t *testing.T) {
 func TestDetailPopup_AnyKeyCloses(t *testing.T) {
 	tx := models.Transaction{Description: "x", Amount: -1}
 	m := Model{width: 100, height: 30, txs: []models.Transaction{tx}, view: viewDetail, detailTx: &tx}
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(Model)
 	if m.view != viewList || m.detailTx != nil {
 		t.Errorf("expected esc to close the detail popup back to viewList, got view=%v detailTx=%v", m.view, m.detailTx)
@@ -968,7 +966,7 @@ func TestDetailPopup_AnyKeyCloses(t *testing.T) {
 func TestDetailPopup_EKeyJumpsToEdit(t *testing.T) {
 	tx := models.Transaction{Description: "Rewe", Amount: -12.34, Category: "groceries"}
 	m := Model{width: 100, height: 30, txs: []models.Transaction{tx}, view: viewDetail, detailTx: &tx}
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	mi, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: []rune("e")[0]})
 	m = mi.(Model)
 	if m.view != viewForm {
 		t.Fatalf("expected 'e' on the detail popup to open the edit form, got %v", m.view)
@@ -1153,7 +1151,7 @@ func TestCategoryPickItems_EmptyQueryReturnsEverything(t *testing.T) {
 
 func TestOpenCategoryPick_FKeyOpensPopup(t *testing.T) {
 	m := Model{width: 100, height: 30}
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	mi, cmd := m.Update(tea.KeyPressMsg{Text: "f", Code: []rune("f")[0]})
 	m = mi.(Model)
 	if m.view != viewCategoryPick {
 		t.Fatalf("expected 'f' to open viewCategoryPick, got %v", m.view)
@@ -1168,9 +1166,9 @@ func TestCategoryPick_SelectingACategoryAppliesFilterAndReloads(t *testing.T) {
 	m = m.openCategoryPick()
 
 	// cursor 0 = "All categories", 1 = "dining" (alphabetical, no query typed)
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mi.(Model)
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 
 	if m.view != viewList {
@@ -1188,7 +1186,7 @@ func TestCategoryPick_SelectingAllCategoriesClearsFilter(t *testing.T) {
 	m := Model{width: 100, height: 30, categories: []string{"dining"}, categoryFilter: "dining"}
 	m = m.openCategoryPick()
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // cursor already at "All categories"
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // cursor already at "All categories"
 	m = mi.(Model)
 	if m.categoryFilter != "" {
 		t.Errorf("expected 'All categories' to clear the filter, got %q", m.categoryFilter)
@@ -1199,9 +1197,9 @@ func TestCategoryPick_EscCancelsWithoutApplyingAnyChange(t *testing.T) {
 	m := Model{width: 100, height: 30, categories: []string{"dining", "groceries"}, categoryFilter: "dining"}
 	m = m.openCategoryPick()
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown}) // move toward "groceries"
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // move toward "groceries"
 	m = mi.(Model)
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(Model)
 
 	if m.view != viewList {
@@ -1219,7 +1217,7 @@ func TestCategoryPick_TypingClampsCursorToNarrowedList(t *testing.T) {
 
 	// move cursor to the last item (streaming, index 3: All+dining+groceries+streaming)
 	for range 3 {
-		mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mi.(Model)
 	}
 	if m.categoryPickCursor != 3 {
@@ -1229,7 +1227,7 @@ func TestCategoryPick_TypingClampsCursorToNarrowedList(t *testing.T) {
 	// typing a query that narrows to just "All categories" + "dining" must
 	// pull the cursor back in bounds, not leave it pointing past the end
 	for _, r := range "din" {
-		mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		mi, _ := m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
 		m = mi.(Model)
 	}
 	items := categoryPickItems(m.categories, m.categoryPickInput.Value())
@@ -1240,7 +1238,7 @@ func TestCategoryPick_TypingClampsCursorToNarrowedList(t *testing.T) {
 
 func TestCategoryFilter_EscClearsAppliedFilterWhenNoSearchActive(t *testing.T) {
 	m := Model{width: 100, height: 30, categoryFilter: "dining", allTxs: []models.Transaction{{Category: "dining"}}}
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(Model)
 	if m.categoryFilter != "" {
 		t.Errorf("expected esc to clear the category filter, got %q", m.categoryFilter)
@@ -1259,7 +1257,7 @@ func TestCategoryFilter_EscClearsSearchBeforeCategoryFilter(t *testing.T) {
 		allTxs: []models.Transaction{{Category: "dining", Payee: "budgetctl"}},
 	}
 	m.txs = filterTxs(m.allTxs, m.searchQ)
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(Model)
 	if m.searchQ != "" {
 		t.Errorf("expected esc to clear the search query first, got %q", m.searchQ)

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"math"
 	"os"
 	"path/filepath"
@@ -11,6 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/filepicker"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/aeon022/budgetctl/internal/budget"
 	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
@@ -19,11 +25,6 @@ import (
 	"github.com/aeon022/missionctl-core/overlay"
 	"github.com/aeon022/missionctl-core/palette"
 	"github.com/aeon022/missionctl-core/theme"
-	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 )
@@ -69,23 +70,30 @@ var formLabels = [fCount]string{"Date", "Description", "Amount", "Category"}
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
+// adaptive resolves a light/dark ANSI color pair once at startup — v2 dropped
+// AdaptiveColor and these package-level styles are built once, not per render.
+var adaptive = func() func(light, dark string) color.Color {
+	pick := lipgloss.LightDark(lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
+	return func(light, dark string) color.Color { return pick(lipgloss.Color(light), lipgloss.Color(dark)) }
+}()
+
 var (
 	// Shared across the suite via missionctl-core/theme — keeping the local
 	// names so every existing style reference below stays unchanged.
-	colorBlue   = theme.Blue
-	colorGreen  = theme.Green
-	colorRed    = theme.Red
-	colorMuted  = theme.Muted
-	colorSubtle = theme.Subtle
-	colorAmber  = theme.Amber
+	colorBlue   = theme.BlueV2
+	colorGreen  = theme.GreenV2
+	colorRed    = theme.RedV2
+	colorMuted  = theme.MutedV2
+	colorSubtle = theme.SubtleV2
+	colorAmber  = theme.AmberV2
 
 	styleTabActive = lipgloss.NewStyle().Bold(true).
-			Foreground(theme.OnAccent).
+			Foreground(theme.OnAccentV2).
 			Background(colorBlue).
 			Padding(0, 2)
 	styleTabInact      = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
 	styleAcctTabActive = lipgloss.NewStyle().Bold(true).
-				Foreground(theme.OnAccent).
+				Foreground(theme.OnAccentV2).
 				Background(colorGreen).
 				Padding(0, 2)
 	styleAcctTabInact = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
@@ -96,17 +104,17 @@ var (
 	styleOK           = lipgloss.NewStyle().Foreground(colorGreen)
 	styleMuted        = lipgloss.NewStyle().Foreground(colorMuted)
 	styleSelected     = lipgloss.NewStyle().
-				Background(theme.SelectedBg).
-				Foreground(theme.SelectedFg).
+				Background(theme.SelectedBgV2).
+				Foreground(theme.SelectedFgV2).
 				Bold(true)
 	styleIncome    = lipgloss.NewStyle().Foreground(colorGreen)
 	styleExpense   = lipgloss.NewStyle().Foreground(colorRed)
 	styleCategory  = lipgloss.NewStyle().Foreground(colorAmber)
 	stylePayee     = lipgloss.NewStyle().Foreground(colorBlue)
 	styleSummaryH  = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleToday     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "214", Dark: "220"}).Bold(true)
+	styleToday     = lipgloss.NewStyle().Foreground(adaptive("214", "220")).Bold(true)
 	styleDateWeek  = lipgloss.NewStyle().Foreground(colorMuted)
-	styleDateMonth = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "247", Dark: "242"})
+	styleDateMonth = lipgloss.NewStyle().Foreground(adaptive("247", "242"))
 	styleDateOld   = lipgloss.NewStyle().Foreground(colorSubtle)
 )
 
@@ -363,15 +371,32 @@ func newForm(t *models.Transaction) [fCount]textinput.Model {
 	return form
 }
 
+// motionThrottleFilter drops MouseMotionMsg messages arriving <16ms apart —
+// all-motion mouse mode re-renders on every pixel and can overwhelm the terminal.
+func motionThrottleFilter() func(tea.Model, tea.Msg) tea.Msg {
+	var lastMotion time.Time
+	return func(_ tea.Model, msg tea.Msg) tea.Msg {
+		if _, ok := msg.(tea.MouseMotionMsg); !ok {
+			return msg
+		}
+		now := time.Now()
+		if now.Sub(lastMotion) < 16*time.Millisecond {
+			return nil
+		}
+		lastMotion = now
+		return msg
+	}
+}
+
 func Run() error {
 	m := New()
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion(), tea.WithFPS(30))
+	p := tea.NewProgram(m, tea.WithFilter(motionThrottleFilter()), tea.WithFPS(30))
 	_, err := p.Run()
 	return err
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadCmd("", "", ""), tea.WindowSize())
+	return tea.Batch(loadCmd("", "", ""), tea.RequestWindowSize)
 }
 
 func (m Model) activeMonth() string {
@@ -452,7 +477,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.height < 1 {
 			m.height = 1
 		}
-		m.vp = viewport.New(msg.Width, m.height-6)
+		m.vp = viewport.New(viewport.WithWidth(msg.Width), viewport.WithHeight(m.height-6))
 
 	case txLoadedMsg:
 		// Init() loads with an empty month filter (months aren't known yet
@@ -612,62 +637,66 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusTime = time.Now()
 		return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
 
-	case tea.MouseMsg:
+	case tea.MouseWheelMsg:
 		switch msg.Button {
-		case tea.MouseButtonWheelUp:
+		case tea.MouseWheelUp:
 			if m.view == viewSummary {
-				m.vp.LineUp(3)
+				m.vp.ScrollUp(3)
 			} else if m.cursor > 0 {
 				m.cursor--
 			}
-		case tea.MouseButtonWheelDown:
+		case tea.MouseWheelDown:
 			if m.view == viewSummary {
-				m.vp.LineDown(3)
+				m.vp.ScrollDown(3)
 			} else if m.cursor < len(m.txs)-1 {
 				m.cursor++
-			}
-		case tea.MouseButtonLeft:
-			if msg.Action != tea.MouseActionPress || m.view != viewList {
-				return m, nil
-			}
-			if i := m.tabHitTest(msg.X, msg.Y); i >= 0 {
-				if i != m.activeTab {
-					m.activeTab = i
-					m.cursor = 0
-					return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
-				}
-				return m, nil
-			}
-			if i := m.accountTabHitTest(msg.X, msg.Y); i >= -1 {
-				if i != m.activeAccount {
-					m.activeAccount = i
-					m.cursor = 0
-					return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
-				}
-				return m, nil
-			}
-			if i := m.rowHitTest(msg.Y); i >= 0 {
-				now := time.Now()
-				if i == m.lastClickRow && now.Sub(m.lastClickAt) < doubleClickWindow {
-					m.cursor = i
-					m.lastClickRow = -1 // consumed, so a third click starts fresh
-					t := m.txs[i]
-					m.detailTx = &t
-					m.view = viewDetail
-					return m, nil
-				}
-				m.cursor = i
-				m.lastClickRow = i
-				m.lastClickAt = now
-			}
-		case tea.MouseButtonNone:
-			if msg.Action == tea.MouseActionMotion && m.view == viewList {
-				m.hoverRow = m.rowHitTest(msg.Y)
 			}
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.MouseClickMsg:
+		if msg.Button != tea.MouseLeft || m.view != viewList {
+			return m, nil
+		}
+		if i := m.tabHitTest(msg.X, msg.Y); i >= 0 {
+			if i != m.activeTab {
+				m.activeTab = i
+				m.cursor = 0
+				return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+			}
+			return m, nil
+		}
+		if i := m.accountTabHitTest(msg.X, msg.Y); i >= -1 {
+			if i != m.activeAccount {
+				m.activeAccount = i
+				m.cursor = 0
+				return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+			}
+			return m, nil
+		}
+		if i := m.rowHitTest(msg.Y); i >= 0 {
+			now := time.Now()
+			if i == m.lastClickRow && now.Sub(m.lastClickAt) < doubleClickWindow {
+				m.cursor = i
+				m.lastClickRow = -1 // consumed, so a third click starts fresh
+				t := m.txs[i]
+				m.detailTx = &t
+				m.view = viewDetail
+				return m, nil
+			}
+			m.cursor = i
+			m.lastClickRow = i
+			m.lastClickAt = now
+		}
+		return m, nil
+
+	case tea.MouseMotionMsg:
+		if m.view == viewList {
+			m.hoverRow = m.rowHitTest(msg.Y)
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
 		m.err = nil
 		// The delete-undo toast gets the longer undoWindow instead of the
 		// usual 3s — it's also the window "u" checks below, so the message
@@ -782,7 +811,7 @@ func categoryPickItems(categories []string, query string) []string {
 	return items
 }
 
-func (m Model) updateCategoryPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateCategoryPick(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	items := categoryPickItems(m.categories, m.categoryPickInput.Value())
 	switch msg.String() {
 	case "ctrl+c":
@@ -877,7 +906,7 @@ func (m Model) renderCategoryPickPopup() string {
 // updateCategoryTranslate handles the "t" (summary view) AI-suggested
 // category-rename popup: navigate + toggle which suggestions to keep,
 // enter applies the selected ones, esc cancels without changing anything.
-func (m Model) updateCategoryTranslate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateCategoryTranslate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -1087,7 +1116,7 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateImport(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.importStep {
 	case importPickFile:
 		if msg.String() == "esc" {
@@ -1207,7 +1236,7 @@ func (m Model) confirmDataDir(newDir string) Model {
 	return m
 }
 
-func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateSettings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.settingsConfirming {
 		switch msg.String() {
 		case "ctrl+c":
@@ -1318,7 +1347,7 @@ func (m Model) openProfiles() Model {
 	return m
 }
 
-func (m Model) updateProfiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateProfiles(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.profileCreating {
 		switch msg.String() {
 		case "ctrl+c":
@@ -1502,7 +1531,7 @@ func (m Model) renderProfilesPopup() string {
 		Render(b.String())
 }
 
-func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// delete confirmation (status-bar prompt)
 	if m.deleteTarget != nil {
 		switch msg.String() {
@@ -1663,9 +1692,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			chosen := matches[m.paletteCursor]
 			m = closePalette(m)
-			replay := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(chosen.Key)}
+			replay := tea.KeyPressMsg{Text: chosen.Key, Code: []rune(chosen.Key)[0]}
 			if chosen.Key == "enter" {
-				replay = tea.KeyMsg{Type: tea.KeyEnter}
+				replay = tea.KeyPressMsg{Code: tea.KeyEnter}
 			}
 			return m.updateList(replay)
 		}
@@ -1878,7 +1907,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateSummary(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.settingGoal {
 		switch msg.String() {
 		case "enter":
@@ -1960,7 +1989,7 @@ func (m Model) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.view = viewList
@@ -2259,7 +2288,15 @@ func aiCategorizeStepCmd(remaining []models.Transaction, existingCategories []st
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	v := tea.NewView(m.viewContent())
+	// v1's WithAltScreen()/WithMouseAllMotion() are per-View fields in v2.
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeAllMotion
+	return v
+}
+
+func (m Model) viewContent() string {
 	switch m.view {
 	case viewSummary:
 		return m.renderSummaryView()
@@ -2825,7 +2862,7 @@ func (m Model) renderList() string {
 				// for everything after the highlight, so no query here.
 				line = styleSelected.Width(selRowW).Render(formatTxRow(t, selRowW, ""))
 			case i == m.hoverRow:
-				line = theme.Hover.Width(selRowW).Render(formatTxRow(t, selRowW, ""))
+				line = theme.HoverV2.Width(selRowW).Render(formatTxRow(t, selRowW, ""))
 			default:
 				line = formatTxRow(t, selRowW, m.searchQ)
 			}
@@ -2984,7 +3021,7 @@ func (m Model) openHelp() Model {
 		popW = 40
 	}
 
-	vp := viewport.New(popW-4, popH-4) // border 1+1, padding(0,1) → 2 cols; -1 row for footer, -1 blank spacer above it
+	vp := viewport.New(viewport.WithWidth(popW-4), viewport.WithHeight(popH-4)) // border 1+1, padding(0,1) → 2 cols; -1 row for footer, -1 blank spacer above it
 	vp.SetContent(m.helpContent())
 
 	m.helpVP = vp
@@ -3001,7 +3038,7 @@ var stylePopupBorder = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Bord
 // the whole screen — the list stays visible around it.
 func (m Model) renderHelpPopup() string {
 	footer := "esc / ?  close"
-	if m.helpVP.TotalLineCount() > m.helpVP.Height {
+	if m.helpVP.TotalLineCount() > m.helpVP.Height() {
 		footer = fmt.Sprintf("j/k scroll (%d%%)  ·  %s", int(m.helpVP.ScrollPercent()*100), footer)
 	}
 	body := m.helpVP.View() + "\n\n" + styleHelp.Render(footer)
@@ -3038,7 +3075,7 @@ func (m Model) renderSummaryView() string {
 	if m.settingGoal {
 		vpH--
 	}
-	m.vp.Height = vpH
+	m.vp.SetHeight(vpH)
 	b.WriteString(m.vp.View())
 
 	if m.settingGoal {
@@ -3046,7 +3083,7 @@ func (m Model) renderSummaryView() string {
 	}
 
 	pct := ""
-	if m.vp.TotalLineCount() > m.vp.Height {
+	if m.vp.TotalLineCount() > m.vp.Height() {
 		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
 	}
 	b.WriteString("\n  " + styleHelp.Render("esc:back  g:goal  t:translate  tab:month  y:year  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
