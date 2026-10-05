@@ -17,7 +17,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"github.com/spf13/viper"
 )
 
 func typeKeys(t *testing.T, m Model, keys ...string) (Model, tea.Cmd) {
@@ -64,8 +63,8 @@ func feed(t *testing.T, m Model, cmd tea.Cmd) Model {
 }
 
 func TestFormAddsManualTransaction(t *testing.T) {
-	viper.Set("db_path", t.TempDir()+"/budget.db")
-	defer viper.Set("db_path", "")
+	config.Set("db_path", t.TempDir()+"/budget.db")
+	defer config.Set("db_path", "")
 
 	m := New()
 
@@ -118,8 +117,8 @@ func TestFormAddsManualTransaction(t *testing.T) {
 }
 
 func TestFormValidation(t *testing.T) {
-	viper.Set("db_path", t.TempDir()+"/budget.db")
-	defer viper.Set("db_path", "")
+	config.Set("db_path", t.TempDir()+"/budget.db")
+	defer config.Set("db_path", "")
 
 	m := New()
 	m, _ = typeKeys(t, m, "n")
@@ -140,8 +139,8 @@ func TestFormValidation(t *testing.T) {
 }
 
 func TestEditFlow(t *testing.T) {
-	viper.Set("db_path", t.TempDir()+"/budget.db")
-	defer viper.Set("db_path", "")
+	config.Set("db_path", t.TempDir()+"/budget.db")
+	defer config.Set("db_path", "")
 
 	// seed one tx directly
 	s, err := store.New(config.DBPath(), config.Shared())
@@ -160,8 +159,8 @@ func TestEditFlow(t *testing.T) {
 }
 
 func TestDeleteConfirmCancel(t *testing.T) {
-	viper.Set("db_path", t.TempDir()+"/budget.db")
-	defer viper.Set("db_path", "")
+	config.Set("db_path", t.TempDir()+"/budget.db")
+	defer config.Set("db_path", "")
 
 	// add one entry through the form
 	m := New()
@@ -685,8 +684,8 @@ func TestImportAssistant_AccountAutoDetectedFromParsedTransactions(t *testing.T)
 }
 
 func TestImportAssistant_AccountTagAppliedOnImport(t *testing.T) {
-	viper.Set("db_path", t.TempDir()+"/budget.db")
-	defer viper.Set("db_path", "")
+	config.Set("db_path", t.TempDir()+"/budget.db")
+	defer config.Set("db_path", "")
 
 	csvPath := t.TempDir() + "/export.csv"
 	if err := os.WriteFile(csvPath, []byte("Date,Description,Amount\n2026-07-20,Coffee Shop,-4.50\n"), 0o644); err != nil {

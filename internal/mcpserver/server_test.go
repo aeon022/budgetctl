@@ -7,21 +7,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aeon022/budgetctl/internal/config"
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/spf13/viper"
 )
 
 // setupTestDB points config.DBPath() at a temporary database via the existing
-// viper "db_path" override and seeds it. budgetctl has no external
+// config "db_path" override and seeds it. budgetctl has no external
 // integration (no AppleScript, no network) — every handler here is a pure
 // local SQLite read/write, so all of them are safe to smoke-test directly.
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "budgetctl.db")
-	viper.Set("db_path", path)
-	t.Cleanup(func() { viper.Set("db_path", "") })
+	config.Set("db_path", path)
+	t.Cleanup(func() { config.Set("db_path", "") })
 
 	s, err := store.New(path, false)
 	if err != nil {

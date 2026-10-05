@@ -5,17 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/spf13/viper"
 )
 
-// resetViper gives each test a clean, isolated HOME and viper state — the
-// package's functions all read/write through the global viper instance.
+// resetViper gives each test a clean, isolated HOME and config store state — the
+// package's functions all read/write through the global config store instance.
 func resetViper(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	viper.Reset()
+	settings.Reset()
 	return home
 }
 

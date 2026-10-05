@@ -5,8 +5,8 @@ import "time"
 type Transaction struct {
 	ID          string
 	Date        time.Time
-	Payee       string // counterparty name (payer/payee), when the bank export separates it
-	Description string // purpose/reference text (Verwendungszweck); the whole line for formats that don't separate it
+	Payee       string  // counterparty name (payer/payee), when the bank export separates it
+	Description string  // purpose/reference text (Verwendungszweck); the whole line for formats that don't separate it
 	Amount      float64 // negative = expense, positive = income
 	Category    string
 	Account     string

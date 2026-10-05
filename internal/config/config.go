@@ -10,17 +10,16 @@ import (
 
 	coreconfig "github.com/aeon022/missionctl-core/config"
 	"github.com/aeon022/missionctl-core/licensing"
-	"github.com/spf13/viper"
 )
 
+// settings is this tool's config store (replaces the former global viper).
+var settings = coreconfig.NewStore("budgetctl")
+
 func Init() {
-	viper.SetConfigName("budgetctl")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath("$HOME/.config/budgetctl")
-	viper.AddConfigPath(".")
-	viper.SetEnvPrefix("BUDGETCTL")
-	viper.AutomaticEnv()
-	_ = viper.ReadInConfig()
+	settings.SetEnvPrefix("BUDGETCTL")
+	settings.AddPath("$HOME/.config/budgetctl")
+	settings.AddPath(".")
+	_ = settings.Read()
 }
 
 // DBPath returns the database file path: if a profile is active, its own
@@ -43,11 +42,11 @@ func DBPath() string {
 // correctly even while a different profile is active; DBPath itself can't
 // be reused for that since it always follows ActiveProfile.
 func DefaultDBPath() string {
-	if dir := viper.GetString("data_dir"); dir != "" {
+	if dir := settings.GetString("data_dir"); dir != "" {
 		resolved, _ := coreconfig.ResolveDir("budgetctl", dir)
 		return filepath.Join(resolved, "budget.db")
 	}
-	if p := viper.GetString("db_path"); p != "" {
+	if p := settings.GetString("db_path"); p != "" {
 		return expandHome(p)
 	}
 	dir, _ := coreconfig.ResolveDir("budgetctl", "")
@@ -73,7 +72,7 @@ func Shared() bool {
 // default resolves to a user-configured (possibly synced) directory,
 // regardless of whether a profile is currently active.
 func DefaultShared() bool {
-	return viper.GetString("data_dir") != ""
+	return settings.GetString("data_dir") != ""
 }
 
 // SetDataDir persists data_dir to ~/.config/budgetctl/budgetctl.yaml and
@@ -81,13 +80,13 @@ func DefaultShared() bool {
 // reflect the change without a restart. Pass "" to clear the override and
 // revert to the private default. Used by the TUI's "o" settings screen.
 func SetDataDir(dir string) error {
-	viper.Set("data_dir", contractHome(dir))
+	settings.Set("data_dir", contractHome(dir))
 	return writeConfigFile()
 }
 
 // Profiles returns the configured profile names, sorted.
 func Profiles() []string {
-	m := viper.GetStringMap("profiles")
+	m := settings.GetMap("profiles")
 	names := make([]string, 0, len(m))
 	for name := range m {
 		names = append(names, name)
@@ -99,12 +98,12 @@ func Profiles() []string {
 // ActiveProfile returns the currently active profile name, or "" for the
 // unscoped default database.
 func ActiveProfile() string {
-	return viper.GetString("active_profile")
+	return settings.GetString("active_profile")
 }
 
 // ProfileExists reports whether name is a configured profile.
 func ProfileExists(name string) bool {
-	_, ok := viper.GetStringMap("profiles")[name]
+	_, ok := settings.GetMap("profiles")[name]
 	return ok
 }
 
@@ -113,7 +112,7 @@ func ProfileExists(name string) bool {
 // top-level data_dir is; otherwise a private, non-synced subfolder under
 // this tool's default data directory.
 func ProfileDir(name string) (dir string, shared bool) {
-	if override := viper.GetString("profiles." + name + ".data_dir"); override != "" {
+	if override := settings.GetString("profiles." + name + ".data_dir"); override != "" {
 		return coreconfig.ResolveDir("budgetctl", override)
 	}
 	dir = filepath.Join(coreconfig.DataDir("budgetctl"), "profiles", name)
@@ -136,7 +135,7 @@ func AddProfile(name, dataDir string) error {
 	if ProfileExists(name) {
 		return fmt.Errorf("profile %q already exists", name)
 	}
-	viper.Set("profiles."+name+".data_dir", contractHome(dataDir))
+	settings.Set("profiles."+name+".data_dir", contractHome(dataDir))
 	return writeConfigFile()
 }
 
@@ -211,7 +210,7 @@ func SetProfileDataDir(name, dir string) error {
 	if !ProfileExists(name) {
 		return fmt.Errorf("no profile named %q", name)
 	}
-	viper.Set("profiles."+name+".data_dir", contractHome(dir))
+	settings.Set("profiles."+name+".data_dir", contractHome(dir))
 	return writeConfigFile()
 }
 
@@ -252,11 +251,11 @@ func RemoveProfile(name string) error {
 	if !ProfileExists(name) {
 		return fmt.Errorf("no profile named %q", name)
 	}
-	profiles := viper.GetStringMap("profiles")
+	profiles := settings.GetMap("profiles")
 	delete(profiles, name)
-	viper.Set("profiles", profiles)
+	settings.Set("profiles", profiles)
 	if ActiveProfile() == name {
-		viper.Set("active_profile", "")
+		settings.Set("active_profile", "")
 	}
 	return writeConfigFile()
 }
@@ -268,7 +267,7 @@ func SetActiveProfile(name string) error {
 	if name != "" && !ProfileExists(name) {
 		return fmt.Errorf("no profile named %q — create it first with: budgetctl profile add %s", name, name)
 	}
-	viper.Set("active_profile", name)
+	settings.Set("active_profile", name)
 	return writeConfigFile()
 }
 
@@ -284,11 +283,11 @@ func SetSessionProfile(name string) error {
 	if name != "" && !ProfileExists(name) {
 		return fmt.Errorf("no profile named %q — create it first with: budgetctl profile add %s", name, name)
 	}
-	viper.Set("active_profile", name)
+	settings.Set("active_profile", name)
 	return nil
 }
 
-// writeConfigFile persists the current viper state to
+// writeConfigFile persists the current config state to
 // ~/.config/budgetctl/budgetctl.yaml, creating the directory if needed.
 func writeConfigFile() error {
 	home, err := os.UserHomeDir()
@@ -299,7 +298,7 @@ func writeConfigFile() error {
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		return err
 	}
-	return viper.WriteConfigAs(filepath.Join(cfgDir, "budgetctl.yaml"))
+	return settings.Write(filepath.Join(cfgDir, "budgetctl.yaml"))
 }
 
 // bundleBenefitID and budgetctlBenefitID identify the missionctl Bundle's
@@ -338,19 +337,19 @@ func ProFeatureMessage(feature string) string {
 }
 
 func LicenseKey() string {
-	return viper.GetString("license_key")
+	return settings.GetString("license_key")
 }
 
 func LicenseStatus() string {
-	return viper.GetString("license_status")
+	return settings.GetString("license_status")
 }
 
 func LicenseBenefitID() string {
-	return viper.GetString("license_benefit_id")
+	return settings.GetString("license_benefit_id")
 }
 
 func PolarOrgID() string {
-	if v := viper.GetString("polar_org_id"); v != "" {
+	if v := settings.GetString("polar_org_id"); v != "" {
 		return v
 	}
 	return licensing.DefaultOrgID
@@ -359,9 +358,9 @@ func PolarOrgID() string {
 // SetLicense persists the license key/status/benefit to
 // ~/.config/budgetctl/budgetctl.yaml.
 func SetLicense(key, status, benefitID string) error {
-	viper.Set("license_key", key)
-	viper.Set("license_status", status)
-	viper.Set("license_benefit_id", benefitID)
+	settings.Set("license_key", key)
+	settings.Set("license_status", status)
+	settings.Set("license_benefit_id", benefitID)
 	return writeConfigFile()
 }
 
@@ -383,3 +382,7 @@ func contractHome(p string) string {
 	}
 	return p
 }
+
+// Set overrides a config key for the running process only (not persisted) —
+// test hook, e.g. Set("db_path", tmp) to point at a temporary database.
+func Set(key string, v any) { settings.Set(key, v) }
