@@ -27,6 +27,7 @@ func (m Model) View() tea.View {
 	// v1's WithAltScreen()/WithMouseAllMotion() are per-View fields in v2.
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
+	v.ReportFocus = true // FocusMsg → reload when the window regains focus
 	return v
 }
 

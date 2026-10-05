@@ -226,6 +226,8 @@ type Model struct {
 	profileRemoving string // profile name pending removal confirmation, "" = none
 	profileErr      error
 
+	lastLoad time.Time // last (re)load of the transaction list; throttles the window-focus reload
+
 	status     string
 	statusTime time.Time
 	err        error

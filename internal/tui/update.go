@@ -26,8 +26,30 @@ import (
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
+// browsing reports whether the user is just looking at the list or summary —
+// no search/palette/form/import/confirm/detail state that a reload could
+// disturb.
+func (m Model) browsing() bool {
+	if m.view != viewList && m.view != viewSummary {
+		return false
+	}
+	return !m.searching && !m.inPalette && !m.categorizing && !m.savingRule &&
+		!m.settingGoal && !m.selecting && m.deleteTarget == nil && m.detailTx == nil
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case tea.FocusMsg:
+		// Back from another window: the DB may have changed (a sync, the CLI,
+		// another machine on a shared data_dir). Reload the list — but only
+		// while just browsing, so no typed input, form, import or confirm
+		// prompt is disturbed, and not more than once per 5s.
+		if m.browsing() && time.Since(m.lastLoad) > 5*time.Second {
+			m.lastLoad = time.Now()
+			return m, loadCmd(m.activeMonth(), m.activeAccountName(), m.categoryFilter)
+		}
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -55,6 +77,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// instead of waiting for the user to trigger that reload themselves.
 		firstLoad := len(m.months) == 0 && len(msg.months) > 0
 
+		m.lastLoad = time.Now()
 		m.allTxs = msg.txs
 		m.txs = filterTxs(m.allTxs, m.searchQ)
 		m.summary = msg.sum
