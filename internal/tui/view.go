@@ -13,9 +13,11 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/aeon022/budgetctl/internal/budget"
 	"github.com/aeon022/budgetctl/internal/models"
+	"github.com/aeon022/missionctl-core/emptystate"
 	"github.com/aeon022/missionctl-core/keymap"
 	"github.com/aeon022/missionctl-core/overlay"
 	"github.com/aeon022/missionctl-core/palette"
+	"github.com/aeon022/missionctl-core/statusbar"
 	"github.com/aeon022/missionctl-core/theme"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -39,7 +41,7 @@ func (m Model) viewContent() string {
 		// "?" is only reachable from the main list, so the list is always
 		// the correct background to keep visible behind the popup. No
 		// enclosing border on the list view, so inset 0 is safe.
-		return overlay.Center(m.renderList(), m.renderHelpPopup(), m.width, m.height, 0)
+		return overlay.CenterDim(m.renderList(), m.renderHelpPopup(), m.width, m.height, 0)
 	case viewForm:
 		return m.renderForm()
 	case viewImport:
@@ -567,7 +569,11 @@ func (m Model) renderList() string {
 	rowW := w - 2
 	preListLines := strings.Count(b.String(), "\n")
 	if len(m.txs) == 0 {
-		b.WriteString("\n" + styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
+		if listH >= 3 {
+			b.WriteString(emptystate.Render(w, listH, "", "No transactions yet", "press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
+		} else {
+			b.WriteString("\n" + styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
+		}
 	} else {
 		start := 0
 		if m.cursor >= listH {
@@ -658,19 +664,14 @@ func (m Model) renderList() string {
 	// (notectl, mailctl, ...) rather than a single line that either
 	// overflows or falls back to a much shorter legend depending on
 	// terminal width.
-	line1 := styleHelp.Render("enter:details  n:new  e:edit  d:delete  u:undo  c:categorize  a:ai-categorize  v:select")
-	line2 := styleHelp.Render("i:import  s:summary  /:search  f:filter  :cmd  tab:month  y:year  [/]:account  ?:help  q:quit")
-	pad := rowW - lipgloss.Width(line2) - lipgloss.Width(right)
-	if pad < 0 {
-		// No room for both — drop right (net/position) rather than clamp
-		// padding to 0 and append it anyway, which would still overflow rowW.
-		right = ""
-		pad = rowW - lipgloss.Width(line2)
-		if pad < 0 {
-			pad = 0
-		}
-	}
-	b.WriteString("  " + line1 + "\n  " + line2 + strings.Repeat(" ", pad) + right)
+	line1 := statusbar.Hints(rowW,
+		[2]string{"enter", "details"}, [2]string{"n", "new"}, [2]string{"e", "edit"}, [2]string{"d", "delete"},
+		[2]string{"u", "undo"}, [2]string{"c", "categorize"}, [2]string{"a", "ai-categorize"}, [2]string{"v", "select"})
+	line2 := statusbar.Hints(rowW-lipgloss.Width(right)-1,
+		[2]string{"?", "help"}, [2]string{"q", "quit"}, [2]string{"s", "summary"}, [2]string{"/", "search"},
+		[2]string{"i", "import"}, [2]string{"f", "filter"}, [2]string{":", "cmd"}, [2]string{"tab", "month"},
+		[2]string{"y", "year"}, [2]string{"[/]", "account"})
+	b.WriteString("  " + line1 + "\n  " + statusbar.Line(rowW, line2, right))
 	return b.String()
 }
 
