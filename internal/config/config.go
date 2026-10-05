@@ -386,3 +386,6 @@ func contractHome(p string) string {
 // Set overrides a config key for the running process only (not persisted) —
 // test hook, e.g. Set("db_path", tmp) to point at a temporary database.
 func Set(key string, v any) { settings.Set(key, v) }
+
+// ResetForTest drops all in-memory settings (test hook; pair with a temp HOME).
+func ResetForTest() { settings.Reset() }
