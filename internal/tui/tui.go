@@ -331,18 +331,23 @@ func New() Model {
 	si := textinput.New()
 	si.Placeholder = "search transactions…"
 	si.CharLimit = 100
+	si.SetWidth(40) // v2: width 0 clips the placeholder to 1 char
 	pi := textinput.New()
 	pi.Placeholder = "command…"
 	pi.CharLimit = 40
+	pi.SetWidth(40) // v2: width 0 clips the placeholder to 1 char
 	ci := textinput.New()
 	ci.Placeholder = "category… (or Cat1;Cat2 to split evenly)"
 	ci.CharLimit = 60
+	ci.SetWidth(60) // v2: width 0 clips the placeholder to 1 char
 	gi := textinput.New()
 	gi.Placeholder = "category amount, e.g. Dining 200"
 	gi.CharLimit = 60
+	gi.SetWidth(40) // v2: width 0 clips the placeholder to 1 char
 	ri := textinput.New()
 	ri.Placeholder = "pattern, e.g. RCIAT — enter to save as a rule, esc to skip"
 	ri.CharLimit = 100
+	ri.SetWidth(60) // v2: width 0 clips the placeholder to 1 char
 	return Model{searchInput: si, paletteInput: pi, catInput: ci, goalInput: gi, ruleInput: ri, activeTab: 0, activeAccount: -1, hoverRow: -1, lastClickRow: -1}
 }
 
@@ -358,6 +363,7 @@ func newForm(t *models.Transaction) [fCount]textinput.Model {
 		in := textinput.New()
 		in.Placeholder = placeholders[i]
 		in.CharLimit = 200
+		in.SetWidth(60) // v2: width 0 clips the placeholder to 1 char
 		form[i] = in
 	}
 	if t != nil {
@@ -787,6 +793,7 @@ func (m Model) openCategoryPick() Model {
 	ci := textinput.New()
 	ci.Placeholder = "type to filter…"
 	ci.CharLimit = 60
+	ci.SetWidth(40) // v2: width 0 clips the placeholder to 1 char
 	m.categoryPickInput = ci
 	m.categoryPickCursor = 0
 	m.view = viewCategoryPick
@@ -921,7 +928,7 @@ func (m Model) updateCategoryTranslate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		if m.translateCursor < len(m.translateSuggestions)-1 {
 			m.translateCursor++
 		}
-	case " ":
+	case "space":
 		if m.translateCursor < len(m.translateSuggestions) {
 			m.translateSelected[m.translateCursor] = !m.translateSelected[m.translateCursor]
 		}
@@ -1097,6 +1104,7 @@ func (m Model) openImport() Model {
 	ai := textinput.New()
 	ai.Placeholder = "account (e.g. N26)…"
 	ai.CharLimit = 60
+	ai.SetWidth(40) // v2: width 0 clips the placeholder to 1 char
 
 	m.fp = fp
 	m.importStep = importPickFile
@@ -1418,6 +1426,7 @@ func (m Model) updateProfiles(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		ni := textinput.New()
 		ni.Placeholder = "profile name…"
 		ni.CharLimit = 40
+		ni.SetWidth(40) // v2: width 0 clips the placeholder to 1 char
 		m.profileNewInput = ni
 		m.profileCreating = true
 		m.profileErr = nil
@@ -1634,7 +1643,7 @@ func (m Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.txs)-1 {
 				m.cursor++
 			}
-		case " ":
+		case "space":
 			if len(m.txs) > 0 {
 				id := m.txs[m.cursor].ID
 				if m.selected[id] {
