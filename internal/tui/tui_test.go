@@ -1266,3 +1266,30 @@ func TestCategoryFilter_EscClearsSearchBeforeCategoryFilter(t *testing.T) {
 		t.Errorf("expected the category filter to survive the first esc (search took priority), got %q", m.categoryFilter)
 	}
 }
+
+// Regression: in Bubble Tea v2 a space key press stringifies as "space", not
+// " " — a leftover `case " "` silently never matched. Drives real v2 space
+// presses through batch-select mode (v starts it, j moves, space toggles).
+func TestSpaceKey_TogglesBatchSelection(t *testing.T) {
+	config.Set("db_path", t.TempDir()+"/budget.db")
+	defer config.Set("db_path", "")
+
+	m := New()
+	m.txs = []models.Transaction{{ID: "a", Description: "one"}, {ID: "b", Description: "two"}}
+	m.cursor = 0
+
+	m, _ = typeKeys(t, m, "v", "j") // select first, move to second
+	if !m.selecting || !m.selected["a"] || m.selected["b"] {
+		t.Fatalf("setup: selecting=%v selected=%v", m.selecting, m.selected)
+	}
+
+	press := func() { tm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}); m = tm.(Model) }
+	press()
+	if !m.selected["b"] {
+		t.Fatalf("space did not select the cursor row: %v", m.selected)
+	}
+	press()
+	if m.selected["b"] {
+		t.Errorf("second space did not deselect: %v", m.selected)
+	}
+}
