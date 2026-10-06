@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"github.com/aeon022/missionctl-core/ui"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"time"
 
@@ -29,13 +31,20 @@ const undoWindow = 5 * time.Second
 const payeeColW = 20
 
 func formatTxRow(t *models.Transaction, width int, query string) string {
-	amtStr := fmt.Sprintf("%+8.2f€", t.Amount)
-	amtStyled := ""
-	if t.Amount >= 0 {
-		amtStyled = styleIncome.Render(amtStr)
-	} else {
-		amtStyled = styleExpense.Render(amtStr)
-	}
+	return formatTxRowCols(t, width, query, false)
+}
+
+// amtColW is the Amount column: ui.Money (right-aligned, "+3,200.00") plus "€".
+// Amounts of 100,000 or more overflow it by a cell — fine for a personal budget.
+const (
+	amtColW  = 11
+	acctColW = 12
+)
+
+// formatTxRowCols is formatTxRow with an optional Account column (shown when
+// several accounts are mixed in one list).
+func formatTxRowCols(t *models.Transaction, width int, query string, showAcct bool) string {
+	amtStyled := ui.Money(t.Amount, amtColW-1) + styleMuted.Render("€")
 
 	cat := t.Category
 	if cat == "" {
@@ -61,23 +70,37 @@ func formatTxRow(t *models.Transaction, width int, query string) string {
 	payeeStyled := lipgloss.NewStyle().Width(payeeColW).
 		Render(highlightMatches(truncRunes(payee, payeeColW), payeeMatchIdx, stylePayee))
 
+	acct := ""
+	fixed := 12 + (amtColW + 2) + 18 + (payeeColW + 2) + 4
+	if showAcct {
+		a := t.Account
+		if a == "" {
+			a = "—"
+		}
+		acct = styleMuted.Render(padRunes(truncRunes(a, acctColW), acctColW)) + "  "
+		fixed += acctColW + 2
+	}
+
 	// purpose (Description) fills whatever's left — truncated by RUNE, not
-	// byte: German bank text is full of multi-byte umlauts (ä/ö/ü/ß), and
-	// byte-slicing mid-rune corrupts the output.
-	purposeW := width - 12 - 10 - 18 - (payeeColW + 2) - 4
+	// byte: German bank text is full of multi-byte umlauts (ä/ö/ü/ß).
+	purposeW := width - fixed
 	if purposeW < 10 {
 		purposeW = 10
 	}
 	descMatchIdx := fuzzyMatchIndexes(query, t.Description)
 	purpose := highlightMatches(truncRunes(t.Description, purposeW), descMatchIdx, lipgloss.NewStyle())
 
-	return fmt.Sprintf("%s  %s  %s  %s  %s",
+	row := fmt.Sprintf("%s  %s  %s  %s%s  %s",
 		dateStyled,
 		amtStyled,
 		catStyled,
+		acct,
 		payeeStyled,
 		purpose,
 	)
+	// On a narrow terminal the fixed columns alone are wider than the screen:
+	// cut the row (description and payee go first) instead of overflowing.
+	return ansi.Truncate(row, width, "…")
 }
 
 // truncRunes truncates s to at most n runes, appending "…" if it had to cut

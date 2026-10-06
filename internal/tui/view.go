@@ -19,6 +19,7 @@ import (
 	"github.com/aeon022/missionctl-core/palette"
 	"github.com/aeon022/missionctl-core/statusbar"
 	"github.com/aeon022/missionctl-core/theme"
+	"github.com/aeon022/missionctl-core/ui"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -312,6 +313,9 @@ func (m Model) renderHeader(section string) string {
 // always lands on the row it visually appears to.
 func (m Model) listStartRow() int {
 	row := 4
+	if m.wide() {
+		row++ // panel top border above the in-panel column header
+	}
 	if len(m.accounts) > 0 {
 		row++
 	}
@@ -484,10 +488,7 @@ func (m Model) rowHitTest(y int) int {
 	if idx < 0 || len(m.txs) == 0 {
 		return -1
 	}
-	listH := m.height - m.listStartRow() - 2 // divider + footer bar
-	if listH < 1 {
-		listH = 1
-	}
+	listH := m.listRows()
 	winStart := 0
 	if m.cursor >= listH {
 		winStart = m.cursor - listH + 1
@@ -500,13 +501,12 @@ func (m Model) rowHitTest(y int) int {
 }
 
 func (m Model) renderList() string {
-	var b strings.Builder
 	w := m.width
-
-	b.WriteString(m.renderHeader("Transactions"))
-
-	// ── month tab bar (windowed — see renderMonthTabBar) ──
-	b.WriteString(m.renderMonthTabBar(w))
+	var head []string
+	head = append(head, ui.Header(w, styleHeader.Render("budgetctl")+styleMuted.Render(" · Transactions"), m.headerContext(),
+		styleMuted.Render(time.Now().Format("Mon, 02 Jan 2006"))))
+	head = append(head, m.balanceLine(w))
+	head = append(head, strings.TrimSuffix(m.renderMonthTabBar(w), "\n"))
 
 	// ── account tab bar (only worth showing once there's more than one) ──
 	if len(m.accounts) > 0 {
@@ -519,60 +519,77 @@ func (m Model) renderList() string {
 				aparts = append(aparts, styleAcctTabInact.Render(label))
 			}
 		}
-		b.WriteString(strings.Join(aparts, "") + "\n")
+		head = append(head, strings.Join(aparts, ""))
 	}
 
-	b.WriteString(styleDivider.Render(strings.Repeat("─", w)) + "\n")
+	// Narrow layout: the dimmed column header takes the place the divider used
+	// to have, so the list still starts on listStartRow. Wide layout: the
+	// column header lives inside the Transactions panel instead.
+	if !m.wide() {
+		head = append(head, "  "+ansi.Truncate(m.columnHeader(), max(w-2, 0), ""))
+	}
 
 	if m.searching {
-		b.WriteString("  " + m.searchInput.View() + "\n\n")
+		head = append(head, "  "+m.searchInput.View(), "")
 	}
 	if m.inPalette {
-		b.WriteString("  " + m.paletteInput.View() + "\n")
+		head = append(head, "  "+m.paletteInput.View())
 		matches := palette.Match(paletteCommands, m.paletteInput.Value())
 		if len(matches) > 6 {
 			matches = matches[:6]
 		}
 		if len(matches) == 0 {
-			b.WriteString("    " + styleHelp.Render("no matching command") + "\n")
+			head = append(head, "    "+styleHelp.Render("no matching command"))
 		}
 		for i, c := range matches {
 			row := fmt.Sprintf("%-9s %s", c.Name, c.Desc)
 			if i == m.paletteCursor {
-				b.WriteString("    " + styleSelected.Render("▶ "+row) + "\n")
+				head = append(head, "    "+styleSelected.Render("▶ "+row))
 			} else {
-				b.WriteString("      " + styleHelp.Render(row) + "\n")
+				head = append(head, "      "+styleHelp.Render(row))
 			}
 		}
-		b.WriteString("\n")
+		head = append(head, "")
 	}
 	if m.searchQ != "" {
-		b.WriteString(styleMuted.Render("  /"+m.searchQ) + "\n")
+		head = append(head, styleMuted.Render("  /"+m.searchQ))
 	}
 	if m.categoryFilter != "" {
-		b.WriteString(styleMuted.Render("  filter: ") + styleCategory.Render(m.categoryFilter) + styleMuted.Render("  (esc to clear)") + "\n")
+		head = append(head, styleMuted.Render("  filter: ")+styleCategory.Render(m.categoryFilter)+styleMuted.Render("  (esc to clear)"))
 	}
 	if m.categorizing {
-		b.WriteString("  " + styleCategory.Render("category: ") + m.catInput.View() + "\n")
+		head = append(head, "  "+styleCategory.Render("category: ")+m.catInput.View())
 	} else if m.savingRule {
-		b.WriteString("  " + styleCategory.Render("save as rule? ") + m.ruleInput.View() + "\n")
+		head = append(head, "  "+styleCategory.Render("save as rule? ")+m.ruleInput.View())
 	} else if m.selecting {
-		b.WriteString("  " + styleSelected.Render(fmt.Sprintf("select: %d", len(m.selected))) +
-			styleHelp.Render("  space toggle  A all  c categorize  esc cancel") + "\n")
+		head = append(head, "  "+styleSelected.Render(fmt.Sprintf("select: %d", len(m.selected)))+
+			styleHelp.Render("  space toggle  A all  c categorize  esc cancel"))
 	}
 
-	listH := m.height - m.listStartRow() - 4 // blank spacer + divider + 2-line key bar
-	if listH < 1 {
-		listH = 1
+	listH := m.listRows()
+	leftW := w
+	if m.wide() {
+		leftW = w - insightsWidth - 1
+	}
+	// Row convention (both layouts): every row is a 2-cell lead ("  " or the
+	// accent bar "▌ ") plus textW cells of text. Inside the wide panel the
+	// usable width is leftW-3 (border, one pad column, border).
+	fullW := w
+	if m.wide() {
+		fullW = leftW - 3
+	}
+	textW := fullW - 2
+	selRowW := textW
+	if m.selecting {
+		selRowW -= 4 // room for the "[x] " checkbox prefix
 	}
 
-	rowW := w - 2
-	preListLines := strings.Count(b.String(), "\n")
+	var rows []string
 	if len(m.txs) == 0 {
 		if listH >= 3 {
-			b.WriteString(emptystate.Render(w, listH, "", "No transactions yet", "press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
+			rows = strings.Split(emptystate.Render(fullW, listH, "", "No transactions yet", "press n to add one, or import a CSV: budgetctl import file.csv"), "\n")
 		} else {
-			b.WriteString("\n" + styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv") + "\n")
+			rows = []string{styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv")}
 		}
 	} else {
 		start := 0
@@ -580,59 +597,50 @@ func (m Model) renderList() string {
 			start = m.cursor - listH + 1
 		}
 		end := min(len(m.txs), start+listH)
-		selRowW := rowW
-		if m.selecting {
-			selRowW -= 4 // room for the "[x] " checkbox prefix
-		}
 		for i := start; i < end; i++ {
 			t := &m.txs[i]
-			checkbox := ""
+			checkbox, checkboxPlain := "", ""
 			if m.selecting {
 				if m.selected[t.ID] {
-					checkbox = styleSelected.Render("[x]") + " "
+					checkbox, checkboxPlain = styleSelected.Render("[x]")+" ", "[x] "
 				} else {
-					checkbox = styleHelp.Render("[ ]") + " "
+					checkbox, checkboxPlain = styleHelp.Render("[ ]")+" ", "[ ] "
 				}
 			}
-			var line string
 			switch {
 			case i == m.cursor:
-				// The cursor row wraps its whole line in a single
-				// styleSelected.Render() call below — nesting highlighted
-				// (real-ANSI) text inside that would clobber its background
-				// for everything after the highlight, so no query here.
-				line = styleSelected.Width(selRowW).Render(formatTxRow(t, selRowW, ""))
+				// ui.Row strips styling inside the selected row: nesting colored
+				// text in a background highlight would clobber it after the
+				// first reset.
+				rows = append(rows, ui.Row(fullW, true, checkboxPlain+formatTxRowCols(t, selRowW, "", m.showAcctCol())))
 			case i == m.hoverRow:
-				line = theme.HoverV2.Width(selRowW).Render(formatTxRow(t, selRowW, ""))
+				rows = append(rows, "  "+checkbox+theme.HoverV2.Width(selRowW).Render(formatTxRowCols(t, selRowW, "", m.showAcctCol())))
 			default:
-				line = formatTxRow(t, selRowW, m.searchQ)
+				rows = append(rows, "  "+checkbox+formatTxRowCols(t, selRowW, m.searchQ, m.showAcctCol()))
 			}
-			b.WriteString("  " + checkbox + line + "\n")
 		}
 	}
-	// Pin the status bar to the bottom of the screen instead of letting it
-	// glue itself right under a short list — pad the list block out to its
-	// full line budget, same pattern taskctl/notectl use.
-	for written := strings.Count(b.String(), "\n") - preListLines; written < listH; written++ {
-		b.WriteString("\n")
+
+	var body string
+	if m.wide() {
+		content := "  " + m.columnHeader() + "\n" + strings.Join(rows, "\n")
+		left := ui.Panel(leftW, listH+3, "Transactions", content, true)
+		right := ui.Panel(insightsWidth, listH+3, "Insights", m.insightsContent(insightsWidth-3), false)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+	} else {
+		body = strings.Join(rows, "\n")
 	}
 
-	// ── status bar ──
-	netStr := ""
-	if m.summary != nil {
-		col := styleIncome
-		if m.summary.Net < 0 {
-			col = styleExpense
-		}
-		netStr = styleMuted.Render(" net:") + col.Render(fmt.Sprintf(" %+.0f€", m.summary.Net))
-	}
-	posStr := ""
-	if len(m.txs) > 0 {
-		posStr = styleMuted.Render(fmt.Sprintf(" %d/%d", m.cursor+1, len(m.txs)))
-	}
+	return ui.Frame(m.height, strings.Join(head, "\n"), body, m.listFooter(w))
+}
 
-	right := netStr + posStr
-	b.WriteString("\n" + styleDivider.Render(strings.Repeat("─", w)) + "\n")
+// listFooter is the divider plus ONE status/hint line: a pending confirmation,
+// error or status message, else the key hints in priority order. The right
+// side carries the cursor position (and the selected sum while multi-selecting).
+func (m Model) listFooter(w int) string {
+	rowW := w - 2
+	right := m.footerRight()
+	rule := styleDivider.Render(strings.Repeat("─", w))
 
 	if m.deleteTarget != nil || m.err != nil || m.status != "" {
 		var bar string
@@ -645,34 +653,20 @@ func (m Model) renderList() string {
 		default:
 			bar = styleOK.Render("✓ " + m.status)
 		}
-		pad := rowW - lipgloss.Width(bar) - lipgloss.Width(right)
-		if pad < 0 {
-			// No room for both — drop right (net/position) rather than
-			// clamp padding to 0 and append it anyway, which would still
-			// overflow rowW.
+		// No room for both → drop the right side rather than overflow.
+		if rowW-lipgloss.Width(bar)-lipgloss.Width(right) < 0 {
 			right = ""
-			pad = rowW - lipgloss.Width(bar)
-			if pad < 0 {
-				pad = 0
-			}
 		}
-		b.WriteString("  " + bar + strings.Repeat(" ", pad) + right)
-		return b.String()
+		return rule + "\n  " + statusbar.Line(rowW, bar, right)
 	}
 
-	// Two fixed lines, same layout convention as the rest of the suite
-	// (notectl, mailctl, ...) rather than a single line that either
-	// overflows or falls back to a much shorter legend depending on
-	// terminal width.
-	line1 := statusbar.Hints(rowW,
-		[2]string{"enter", "details"}, [2]string{"n", "new"}, [2]string{"e", "edit"}, [2]string{"d", "delete"},
-		[2]string{"u", "undo"}, [2]string{"c", "categorize"}, [2]string{"a", "ai-categorize"}, [2]string{"v", "select"})
-	line2 := statusbar.Hints(rowW-lipgloss.Width(right)-1,
-		[2]string{"?", "help"}, [2]string{"q", "quit"}, [2]string{"s", "summary"}, [2]string{"/", "search"},
-		[2]string{"i", "import"}, [2]string{"f", "filter"}, [2]string{":", "cmd"}, [2]string{"tab", "month"},
+	hints := statusbar.Hints(rowW-lipgloss.Width(right)-1,
+		[2]string{"?", "help"}, [2]string{"q", "quit"}, [2]string{"enter", "details"}, [2]string{"n", "new"},
+		[2]string{"/", "search"}, [2]string{"s", "summary"}, [2]string{"c", "categorize"}, [2]string{"e", "edit"},
+		[2]string{"d", "delete"}, [2]string{"tab", "month"}, [2]string{"i", "import"}, [2]string{"f", "filter"},
+		[2]string{"v", "select"}, [2]string{"u", "undo"}, [2]string{"a", "ai-categorize"}, [2]string{":", "cmd"},
 		[2]string{"y", "year"}, [2]string{"[/]", "account"})
-	b.WriteString("  " + line1 + "\n  " + statusbar.Line(rowW, line2, right))
-	return b.String()
+	return rule + "\n  " + statusbar.Line(rowW, hints, right)
 }
 
 func (m Model) renderForm() string {
