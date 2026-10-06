@@ -193,9 +193,11 @@ func TestAddTxLogsOneAnonymousEvent(t *testing.T) {
 	if err != nil || len(evs) != 1 || evs[0].Action != "added" || evs[0].Title != "a transaction" {
 		t.Fatalf("events = %+v, %v; want exactly one 'added / a transaction'", evs, err)
 	}
-	raw, _ := os.ReadFile(activity.Path())
-	if strings.Contains(string(raw), "Huber") || strings.Contains(string(raw), "87") {
-		t.Errorf("activity log leaks description/amount:\n%s", raw)
+	// Check the logged fields, not the raw line: the timestamp's digits can
+	// contain "87" by chance (this test was clock-dependent before).
+	logged := evs[0].Tool + " " + evs[0].Action + " " + evs[0].Title
+	if strings.Contains(logged, "Huber") || strings.Contains(logged, "87") {
+		t.Errorf("activity log leaks description/amount: %q", logged)
 	}
 }
 

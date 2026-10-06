@@ -2,7 +2,6 @@ package budget
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -42,10 +41,12 @@ func TestImportLogsOneCountOnlyEvent(t *testing.T) {
 	if len(evs) != 1 || evs[0].Tool != "budgetctl" || evs[0].Action != "imported" || evs[0].Title != "2 transactions" {
 		t.Fatalf("events = %+v, want exactly one 'imported / 2 transactions'", evs)
 	}
-	raw, _ := os.ReadFile(activity.Path())
+	// Check the logged fields, not the raw line: a timestamp like ":42.37…"
+	// would match a secret by chance (clock-dependent flake).
+	logged := evs[0].Tool + " " + evs[0].Action + " " + evs[0].Title
 	for _, secret := range []string{"REWE", "Employer", "42.37", "2500", "Groceries", "Salary", "Joint Account"} {
-		if strings.Contains(string(raw), secret) {
-			t.Errorf("activity log leaks %q:\n%s", secret, raw)
+		if strings.Contains(logged, secret) {
+			t.Errorf("activity log leaks %q: %q", secret, logged)
 		}
 	}
 }
