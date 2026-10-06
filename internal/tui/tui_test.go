@@ -629,9 +629,10 @@ func TestAccountTabHitTest_ClickSwitchesActiveAccount(t *testing.T) {
 	m := Model{width: 100, height: 20, accounts: []string{"N26", "ING"}, activeAccount: -1}
 
 	// account tab row is row 3 (title, rule, month tabs, account tabs);
-	// "All" occupies the leftmost columns, so a click near x=10 should hit it,
-	// and a click further right should hit "N26".
-	mi, cmd := m.Update(tea.MouseClickMsg{X: 10, Y: 3, Button: tea.MouseLeft})
+	// "All" occupies the leftmost columns; a click just past it (computed from
+	// the tab style, not a hard-coded x — the padding changed in round 1) hits "N26".
+	allW := lipgloss.Width(styleAcctTabActive.Render("All"))
+	mi, cmd := m.Update(tea.MouseClickMsg{X: allW + 1, Y: 3, Button: tea.MouseLeft})
 	m = mi.(Model)
 	if m.activeAccount != 0 {
 		t.Errorf("expected click on second account tab to select account 0 (N26), got %d", m.activeAccount)
@@ -652,7 +653,7 @@ func TestAccountTabRow_ShownWithJustOneAccount(t *testing.T) {
 		t.Error("expected the account tab row to render even with only one account")
 	}
 	// Clicking the (now-visible) "N26" tab should select it.
-	if i := m.accountTabHitTest(10, 3); i != 0 {
+	if i := m.accountTabHitTest(lipgloss.Width(styleAcctTabActive.Render("All"))+1, 3); i != 0 {
 		t.Errorf("expected clicking the N26 tab to hit account index 0, got %d", i)
 	}
 }

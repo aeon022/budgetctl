@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -184,7 +185,13 @@ func (m Model) insightsContent(inner int) string {
 	if len(cats) > 5 {
 		cats = cats[:5]
 	}
-	nameW := 12
+	// label column: as wide as the longest category needs (so names aren't cut
+	// at 12 cells), but never more than half the panel; the bar takes the rest.
+	nameW := 8
+	for _, c := range cats {
+		nameW = max(nameW, lipgloss.Width(c.name))
+	}
+	nameW = min(nameW, max(inner/2, 8))
 	barW := max(inner-nameW-6, 4)
 	var b strings.Builder
 	b.WriteString(styleMuted.Render("Top spending") + "\n")
@@ -193,18 +200,22 @@ func (m Model) insightsContent(inner int) string {
 		if g, ok := goal[c.name]; ok && g > 0 {
 			ratio, withGoal = c.spent/g, true
 		}
-		b.WriteString(padRunes(truncRunes(c.name, nameW), nameW) + " " + ui.Bar(barW, ratio, withGoal) + fmt.Sprintf(" %3.0f%%", ratio*100) + "\n")
+		b.WriteString(padRunes(ui.MidEllipsis(c.name, nameW), nameW) + " " + ui.Bar(barW, ratio, withGoal) + fmt.Sprintf(" %3.0f%%", ratio*100) + "\n")
 	}
 	if len(m.trend) > 1 {
 		pts := m.trend
 		if len(pts) > 6 {
 			pts = pts[len(pts)-6:]
 		}
-		vals := make([]float64, len(pts))
-		for i, p := range pts {
-			vals[i] = -p.Expenses
+		rows, maxV := columnChart(pts, inner, 4)
+		b.WriteString("\n" + styleMuted.Render(fmt.Sprintf("Spending, last %d months · max %.0f€", len(pts), maxV)) + "\n")
+		for i, r := range rows {
+			if i == len(rows)-1 {
+				b.WriteString(styleMuted.Render(r) + "\n")
+			} else {
+				b.WriteString(r + "\n")
+			}
 		}
-		b.WriteString("\n" + styleMuted.Render(fmt.Sprintf("Spending, last %d months", len(pts))) + "\n" + ui.Spark(vals) + "\n")
 	}
 	if withGoals := len(goal); withGoals > 0 {
 		b.WriteString("\n" + styleMuted.Render("Bars with a goal fill toward 100%"))
@@ -214,3 +225,60 @@ func (m Model) insightsContent(inner int) string {
 
 // monthLabel is only used by tests/snapshots for readability.
 func monthLabel(t time.Time) string { return t.Format("2006-01") }
+
+// columnChart draws monthly spending as height rows of columns (1/8-cell
+// resolution per row) with a label row of month names underneath, within
+// width cells. The last column (the newest month) is accented, the others
+// muted. It returns the rows (height chart rows + 1 label row) and the largest
+// monthly spending, so the caller can label the scale.
+func columnChart(pts []models.MonthlyPoint, width, height int) ([]string, float64) {
+	n := len(pts)
+	if n == 0 || height < 1 {
+		return nil, 0
+	}
+	vals := make([]float64, n)
+	maxV := 0.0
+	for i, p := range pts {
+		vals[i] = -p.Expenses
+		if vals[i] < 0 {
+			vals[i] = 0
+		}
+		maxV = math.Max(maxV, vals[i])
+	}
+	cw := min(max((width+1)/n-1, 1), 3) // column width: 3 when it fits, down to 1
+	blocks := []rune(" ▁▂▃▄▅▆▇█")
+	accent := lipgloss.NewStyle().Foreground(colorBlue)
+	dim := lipgloss.NewStyle().Foreground(colorMuted)
+	rows := make([]string, 0, height+1)
+	for r := 0; r < height; r++ {
+		var line strings.Builder
+		for i, v := range vals {
+			level := 0
+			if maxV > 0 {
+				level = int(math.Round(v / maxV * float64(height*8)))
+			}
+			cell := min(max(level-(height-1-r)*8, 0), 8)
+			st := dim
+			if i == n-1 {
+				st = accent
+			}
+			if i > 0 {
+				line.WriteString(" ")
+			}
+			line.WriteString(st.Render(strings.Repeat(string(blocks[cell]), cw)))
+		}
+		rows = append(rows, line.String())
+	}
+	var lab strings.Builder
+	for i, p := range pts {
+		if i > 0 {
+			lab.WriteString(" ")
+		}
+		name := p.Month
+		if t, err := time.Parse("2006-01", p.Month); err == nil {
+			name = t.Format("Jan")
+		}
+		lab.WriteString(padRunes(truncRunes(name, cw), cw))
+	}
+	return append(rows, lab.String()), maxV
+}

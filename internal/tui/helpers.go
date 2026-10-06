@@ -53,7 +53,11 @@ func formatTxRowCols(t *models.Transaction, width int, query string, showAcct bo
 	// padRunes, not fmt's "%-*s" — that pads by BYTE length, which
 	// misaligns columns the moment a category/payee contains a multi-byte
 	// rune (umlauts are routine in German bank text: ä/ö/ü/ß).
-	catStyled := styleCategory.Render(padRunes(truncRunes(cat, 16), 16))
+	catStyle := styleCategoryRow
+	if t.Category == "" {
+		catStyle = styleCategory // uncategorized: the one amber cell that asks for attention
+	}
+	catStyled := catStyle.Render(padRunes(truncRunes(cat, 16), 16))
 
 	dateStr := t.Date.Format("2006-01-02")
 	dateStyled := coloredDate(dateStr, t.Date)

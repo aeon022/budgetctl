@@ -33,35 +33,36 @@ var (
 	colorSubtle = theme.SubtleV2
 	colorAmber  = theme.AmberV2
 
+	// One tab look for months AND accounts: the same filled pill as ui.Pill(…, ui.Info)
+	// (it used to be a blue pill for months and a green one for accounts).
 	styleTabActive = lipgloss.NewStyle().Bold(true).
 			Foreground(theme.OnAccentV2).
 			Background(colorBlue).
-			Padding(0, 2)
-	styleTabInact      = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
-	styleAcctTabActive = lipgloss.NewStyle().Bold(true).
-				Foreground(theme.OnAccentV2).
-				Background(colorGreen).
-				Padding(0, 2)
-	styleAcctTabInact = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 2)
-	styleDivider      = lipgloss.NewStyle().Foreground(colorSubtle)
-	styleHeader       = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleHelp         = lipgloss.NewStyle().Foreground(colorMuted)
-	styleErr          = lipgloss.NewStyle().Foreground(colorRed)
-	styleOK           = lipgloss.NewStyle().Foreground(colorGreen)
-	styleMuted        = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSelected     = lipgloss.NewStyle().
+			Padding(0, 1)
+	styleTabInact      = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 1)
+	styleAcctTabActive = styleTabActive
+	styleAcctTabInact  = styleTabInact
+	styleDivider       = lipgloss.NewStyle().Foreground(colorSubtle)
+	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleHelp          = lipgloss.NewStyle().Foreground(colorMuted)
+	styleErr           = lipgloss.NewStyle().Foreground(colorRed)
+	styleOK            = lipgloss.NewStyle().Foreground(colorGreen)
+	styleMuted         = lipgloss.NewStyle().Foreground(colorMuted)
+	styleSelected      = lipgloss.NewStyle().
 				Background(theme.SelectedBgV2).
 				Foreground(theme.SelectedFgV2).
 				Bold(true)
-	styleIncome    = lipgloss.NewStyle().Foreground(colorGreen)
-	styleExpense   = lipgloss.NewStyle().Foreground(colorRed)
-	styleCategory  = lipgloss.NewStyle().Foreground(colorAmber)
-	stylePayee     = lipgloss.NewStyle().Foreground(colorBlue)
-	styleSummaryH  = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleToday     = lipgloss.NewStyle().Foreground(adaptive("214", "220")).Bold(true)
-	styleDateWeek  = lipgloss.NewStyle().Foreground(colorMuted)
-	styleDateMonth = lipgloss.NewStyle().Foreground(adaptive("247", "242"))
-	styleDateOld   = lipgloss.NewStyle().Foreground(colorSubtle)
+	styleIncome   = lipgloss.NewStyle().Foreground(colorGreen)
+	styleExpense  = lipgloss.NewStyle().Foreground(colorRed)
+	styleCategory = lipgloss.NewStyle().Foreground(colorAmber)
+	// list rows: payee in the normal text color, category muted (amber only flags "uncategorized")
+	stylePayee       = lipgloss.NewStyle()
+	styleCategoryRow = lipgloss.NewStyle().Foreground(colorMuted)
+	styleSummaryH    = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleToday       = lipgloss.NewStyle().Foreground(adaptive("214", "220")).Bold(true)
+	styleDateWeek    = lipgloss.NewStyle().Foreground(colorMuted)
+	styleDateMonth   = lipgloss.NewStyle().Foreground(adaptive("247", "242"))
+	styleDateOld     = lipgloss.NewStyle().Foreground(colorSubtle)
 )
 
 // ── command palette (":") ────────────────────────────────────────────────────
