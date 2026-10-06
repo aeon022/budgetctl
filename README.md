@@ -358,6 +358,18 @@ Claude will call `detect_recurring_payments`, then `list_transactions` to cross-
 
 ---
 
+## Recent changes (October 2026)
+
+- **Window focus.** When the terminal window regains focus, the list or summary reloads from the local database — at most every 5 seconds, and only while you are just browsing the list or summary (never while a form, editor, search, palette or confirmation is open, so nothing you are typing is lost). Terminals that don't report focus events simply never trigger it.
+
+- **Footer and empty states.** The key-hint footer is the suite-wide one: it never wraps and drops the least important hints first on narrow terminals. Empty lists and loading screens show a short message with a hint what to press.
+
+- The TUI now runs on Bubble Tea v2; key bindings are unchanged.
+
+- There is no clipboard shortcut in budgetctl, so OSC 52 does not apply.
+
+---
+
 ## Architecture
 
 ```
