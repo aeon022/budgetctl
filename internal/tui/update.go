@@ -1656,7 +1656,11 @@ func insertTxCmd(t *models.Transaction) tea.Cmd {
 			return txSavedMsg{err}
 		}
 		defer s.Close()
-		return txSavedMsg{s.Upsert(context.Background(), t)}
+		err = s.Upsert(context.Background(), t)
+		if err == nil {
+			budget.LogAdded()
+		}
+		return txSavedMsg{err}
 	}
 }
 

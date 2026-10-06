@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/aeon022/missionctl-core/activity"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -175,5 +177,39 @@ func TestHandleGoals(t *testing.T) {
 	res = callTool(t, handleListGoals, nil)
 	if strings.Contains(resultText(t, res), "dining") {
 		t.Error("expected dining goal to be removed after delete")
+	}
+}
+
+func TestAddTxLogsOneAnonymousEvent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MISSIONCTL_DATA_DIR", t.TempDir())
+	t.Setenv("MISSIONCTL_ACTIVITY", "")
+	setupTestDB(t)
+
+	callTool(t, handleAddTx, map[string]any{"description": "Zahnarzt Dr. Huber", "amount": -87.65})
+
+	from, to := activity.Day(time.Now())
+	evs, err := activity.Read(from, to)
+	if err != nil || len(evs) != 1 || evs[0].Action != "added" || evs[0].Title != "a transaction" {
+		t.Fatalf("events = %+v, %v; want exactly one 'added / a transaction'", evs, err)
+	}
+	raw, _ := os.ReadFile(activity.Path())
+	if strings.Contains(string(raw), "Huber") || strings.Contains(string(raw), "87") {
+		t.Errorf("activity log leaks description/amount:\n%s", raw)
+	}
+}
+
+func TestAddTxWithActivityOffStillAdds(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MISSIONCTL_DATA_DIR", t.TempDir())
+	t.Setenv("MISSIONCTL_ACTIVITY", "off")
+	setupTestDB(t)
+
+	res := callTool(t, handleAddTx, map[string]any{"description": "Kaffee", "amount": -3.2})
+	if !strings.Contains(resultText(t, res), "Kaffee") {
+		t.Fatal("add must succeed with logging off")
+	}
+	if _, err := os.Stat(activity.Path()); err == nil {
+		t.Error("logging off must not create the log")
 	}
 }

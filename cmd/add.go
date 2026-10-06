@@ -56,6 +56,7 @@ Examples:
 		if err := s.Upsert(context.Background(), t); err != nil {
 			return err
 		}
+		budget.LogAdded()
 		kind := "expense"
 		if amount > 0 {
 			kind = "income"

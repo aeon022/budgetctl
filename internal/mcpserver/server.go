@@ -227,6 +227,7 @@ func handleAddTx(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResul
 	if err := s.Upsert(ctx, t); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	budget.LogAdded()
 	return mcp.NewToolResultText(fmt.Sprintf("Added: %s %+.2f€ on %s (id: %s, category: %s)",
 		desc, amount, date.Format("2006-01-02"), t.ID, orDash(category))), nil
 }
@@ -274,6 +275,7 @@ func handleImport(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 	ctx := context.Background()
 	rules, _ := s.ListRules(ctx)
 
+	imported := 0
 	for i := range txs {
 		if account != "" {
 			txs[i].Account = account
@@ -281,8 +283,11 @@ func handleImport(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 		if txs[i].Category == "" {
 			txs[i].Category = budget.Categorize(txs[i].Payee+" "+txs[i].Description, rules)
 		}
-		_ = s.Upsert(ctx, &txs[i])
+		if s.Upsert(ctx, &txs[i]) == nil {
+			imported++
+		}
 	}
+	budget.LogImported(imported)
 	return mcp.NewToolResultText(fmt.Sprintf("Imported %d transactions from %s", len(txs), path)), nil
 }
 

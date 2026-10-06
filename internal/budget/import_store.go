@@ -42,6 +42,8 @@ func ImportFile(ctx context.Context, s *store.Store, path, account string, useAI
 		}
 	}
 
+	LogImported(res.Imported)
+
 	if useAI {
 		var uncategorized []models.Transaction
 		for _, tx := range txs {
