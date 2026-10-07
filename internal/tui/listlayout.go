@@ -78,6 +78,173 @@ func (m Model) balanceLine(width int) string {
 	return ansi.Truncate(short, width, "…")
 }
 
+// ── Top block ────────────────────────────────────────────────────────────────
+//
+// Two tiers. From spaciousMinHeight rows up the top block breathes: title bar
+// + rule, blank, a 4-column stat strip (labels over values), blank, month
+// tabs, the account row, blank. Below it the compact block (title, one-line
+// balance, tabs, account row) keeps small terminals from losing list rows.
+// headRowCount is the single source of truth for how many rows the block
+// takes: listStartRow, the tab hit-tests and the visible-window math all
+// derive from it, and a test pins it against what headBase really renders.
+
+const (
+	spaciousMinHeight = 32 // terminal rows (Model.height is the terminal height minus one reserve row)
+	statStripMinWidth = 60 // columns; narrower terminals get the one-line balance
+	acctSameLineWidth = 150
+)
+
+func (m Model) spacious() bool { return m.height+1 >= spaciousMinHeight }
+
+// statRows is the stat strip's height: labels + values, or the single line.
+func (m Model) statRows() int {
+	if m.width >= statStripMinWidth {
+		return 2
+	}
+	return 1
+}
+
+// acctChips renders the account tabs (All + one per account).
+func (m Model) acctChips() string {
+	var parts []string
+	for i, label := range append([]string{"All"}, m.accounts...) {
+		if i-1 == m.activeAccount {
+			parts = append(parts, styleAcctTabActive.Render(label))
+		} else {
+			parts = append(parts, styleAcctTabInact.Render(label))
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+// acctLabel prefixes the account row in the spacious tier so it can't be
+// mistaken for a second row of months.
+func (m Model) acctLabel() string {
+	if !m.spacious() {
+		return ""
+	}
+	return styleMuted.Render("Accounts  ")
+}
+
+// acctOnTabLine: spacious tier, wide terminal, and months + accounts fit side
+// by side without windowing the months — the account chips then sit
+// right-aligned on the month-tab row and save a line.
+func (m Model) acctOnTabLine() bool {
+	if !m.spacious() || len(m.accounts) == 0 || m.width < acctSameLineWidth {
+		return false
+	}
+	acctW := lipgloss.Width(m.acctLabel() + m.acctChips())
+	return monthTabFitCount(m.months, m.width-acctW-2) >= len(m.months)
+}
+
+// headRowCount is the number of rows above the list body (before any
+// search/palette/filter prompt lines, and before the column header).
+func (m Model) headRowCount() int {
+	n := 3 // title + balance + month tabs
+	if len(m.accounts) > 0 {
+		n++
+	}
+	if !m.spacious() {
+		return n
+	}
+	n = 3 + m.statRows() + 1 + 1 + 1 // title, rule, blank, stats, blank, month tabs, blank
+	if len(m.accounts) > 0 && !m.acctOnTabLine() {
+		n++
+	}
+	return n
+}
+
+// tabRowY is the screen row of the month tabs in the list view.
+func (m Model) tabRowY() int {
+	if !m.spacious() {
+		return 2
+	}
+	return 3 + m.statRows() + 1
+}
+
+// acctRowY is the screen row of the account chips (list view).
+func (m Model) acctRowY() int {
+	if m.acctOnTabLine() {
+		return m.tabRowY()
+	}
+	return m.tabRowY() + 1
+}
+
+// acctCol0 is the column where the first account chip starts.
+func (m Model) acctCol0() int {
+	if m.acctOnTabLine() {
+		return m.width - lipgloss.Width(m.acctChips())
+	}
+	return lipgloss.Width(m.acctLabel())
+}
+
+// statStrip renders the balance as four evenly spaced columns — a dim label
+// row over a value row — or, on narrow terminals, the one-line balance.
+func (m Model) statStrip(width int) []string {
+	if width < statStripMinWidth {
+		return []string{m.balanceLine(width)}
+	}
+	b := monthBalance(m.allTxs)
+	cw := (width - 4) / 4
+	money := func(v float64) string { return ui.Money(v, 0) + styleMuted.Render("€") }
+	saved := styleMuted.Render("—")
+	if b.hasRate {
+		pct := signedStyle(b.rate).Render(fmt.Sprintf("%.0f%%", b.rate))
+		saved = pct
+		if bw := min(10, cw-lipgloss.Width(pct)-2); bw >= 4 {
+			saved += " " + ui.Bar(bw, math.Max(0, math.Min(1, b.rate/100)), false)
+		}
+	}
+	cell := func(s string) string {
+		s = ansi.Truncate(s, cw-1, "…")
+		return s + strings.Repeat(" ", max(cw-lipgloss.Width(s), 0))
+	}
+	row := func(cells ...string) string {
+		var sb strings.Builder
+		sb.WriteString("  ")
+		for _, c := range cells {
+			sb.WriteString(cell(c))
+		}
+		return sb.String()
+	}
+	lbl := func(s string) string { return styleMuted.Render(s) }
+	return []string{
+		row(lbl("INCOME"), lbl("EXPENSES"), lbl("BALANCE"), lbl("SAVED")),
+		row(money(b.income), money(b.expenses), money(b.net), saved),
+	}
+}
+
+// headBase builds the rows counted by headRowCount (no prompts).
+func (m Model) headBase() []string {
+	w := m.width
+	title := ui.Header(w, styleHeader.Render("budgetctl")+styleMuted.Render(" · Transactions"), m.headerContext(),
+		styleMuted.Render(time.Now().Format("Mon 02 Jan")))
+	tabs := strings.TrimSuffix(m.renderMonthTabBar(w), "\n")
+
+	if !m.spacious() {
+		head := []string{title, m.balanceLine(w), tabs}
+		if len(m.accounts) > 0 {
+			head = append(head, m.acctChips())
+		}
+		return head
+	}
+
+	head := []string{title, styleDivider.Render(strings.Repeat("─", w)), ""}
+	head = append(head, m.statStrip(w)...)
+	head = append(head, "")
+	switch {
+	case len(m.accounts) > 0 && m.acctOnTabLine():
+		block := m.acctLabel() + m.acctChips()
+		gap := max(w-lipgloss.Width(tabs)-lipgloss.Width(block), 1)
+		head = append(head, tabs+strings.Repeat(" ", gap)+block)
+	case len(m.accounts) > 0:
+		head = append(head, tabs, m.acctLabel()+m.acctChips())
+	default:
+		head = append(head, tabs)
+	}
+	return append(head, "")
+}
+
 func plain(s string) string { return ansi.Strip(s) }
 
 // headerContext is the middle of the title bar: profile, account scope and

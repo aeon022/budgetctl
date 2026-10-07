@@ -1361,10 +1361,7 @@ func (m Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// rowHitTest's scroll-window math so "3" lands on the same row a
 		// click at that screen position would.
 		n := int(msg.String()[0] - '0')
-		listH := m.height - m.listStartRow() - 2
-		if listH < 1 {
-			listH = 1
-		}
+		listH := m.listRows() // same window math as the renderer (incl. the wide panel's border)
 		winStart := 0
 		if m.cursor >= listH {
 			winStart = m.cursor - listH + 1

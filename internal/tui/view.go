@@ -296,7 +296,7 @@ func (m Model) renderImportDone() string {
 // section is what changes ("Transactions", "Summary", "New Entry", "Help").
 func (m Model) renderHeader(section string) string {
 	left := styleHeader.Render("budgetctl") + styleMuted.Render(" · "+section)
-	right := styleMuted.Render(time.Now().Format("Mon, 02 Jan 2006"))
+	right := styleMuted.Render(time.Now().Format("Mon 02 Jan"))
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
 		pad = 1
@@ -312,12 +312,9 @@ func (m Model) renderHeader(section string) string {
 // the visible window) and the mouse hit-test helpers below, so a click
 // always lands on the row it visually appears to.
 func (m Model) listStartRow() int {
-	row := 4
+	row := m.headRowCount() + 1 // + the column header (narrow) or the panel's top border (wide)
 	if m.wide() {
-		row++ // panel top border above the in-panel column header
-	}
-	if len(m.accounts) > 0 {
-		row++
+		row++ // wide: the in-panel column header sits below the border
 	}
 	if m.searching {
 		row += 2
@@ -430,8 +427,7 @@ func (m Model) renderMonthTabBar(width int) string {
 // exactly, including the "‹"/"›" scroll indicators, so clicking the
 // leftmost/rightmost visible tab always maps to the right month.
 func (m Model) tabHitTest(x, y int) int {
-	const tabRow = 2 // header title(0) + rule(1) + tabs(2)
-	if y != tabRow || len(m.months) == 0 {
+	if y != m.tabRowY() || len(m.months) == 0 {
 		return -1
 	}
 	visible, start := m.monthTabWindow(m.width)
@@ -460,11 +456,10 @@ func (m Model) tabHitTest(x, y int) int {
 // activeAccountName/m.accounts[-1] is never dereferenced here directly —
 // the returned index is offset by one internally so -1 ("All") is a valid hit.
 func (m Model) accountTabHitTest(x, y int) int {
-	const acctTabRow = 3 // header title(0) + rule(1) + month tabs(2) + account tabs(3)
-	if y != acctTabRow || len(m.accounts) == 0 {
+	if y != m.acctRowY() || len(m.accounts) == 0 {
 		return -2
 	}
-	col := 0
+	col := m.acctCol0()
 	labels := append([]string{"All"}, m.accounts...)
 	for i, label := range labels {
 		w := lipgloss.Width(styleAcctTabInact.Render(label))
@@ -502,25 +497,7 @@ func (m Model) rowHitTest(y int) int {
 
 func (m Model) renderList() string {
 	w := m.width
-	var head []string
-	head = append(head, ui.Header(w, styleHeader.Render("budgetctl")+styleMuted.Render(" · Transactions"), m.headerContext(),
-		styleMuted.Render(time.Now().Format("Mon, 02 Jan 2006"))))
-	head = append(head, m.balanceLine(w))
-	head = append(head, strings.TrimSuffix(m.renderMonthTabBar(w), "\n"))
-
-	// ── account tab bar (only worth showing once there's more than one) ──
-	if len(m.accounts) > 0 {
-		var aparts []string
-		labels := append([]string{"All"}, m.accounts...)
-		for i, label := range labels {
-			if i-1 == m.activeAccount {
-				aparts = append(aparts, styleAcctTabActive.Render(label))
-			} else {
-				aparts = append(aparts, styleAcctTabInact.Render(label))
-			}
-		}
-		head = append(head, strings.Join(aparts, ""))
-	}
+	head := m.headBase()
 
 	// Narrow layout: the dimmed column header takes the place the divider used
 	// to have, so the list still starts on listStartRow. Wide layout: the
@@ -609,9 +586,9 @@ func (m Model) renderList() string {
 			}
 			switch {
 			case i == m.cursor:
-				// ui.Row strips styling inside the selected row: nesting colored
-				// text in a background highlight would clobber it after the
-				// first reset.
+				// ui.Row keeps the cells' own colors (it re-paints the selection
+				// background after every inner reset) and lifts dimmed (Subtle)
+				// text to Muted, which can equal the selection background.
 				rows = append(rows, ui.Row(fullW, true, checkboxPlain+formatTxRowCols(t, selRowW, "", m.showAcctCol())))
 			case i == m.hoverRow:
 				rows = append(rows, "  "+checkbox+theme.HoverV2.Width(selRowW).Render(formatTxRowCols(t, selRowW, "", m.showAcctCol())))
