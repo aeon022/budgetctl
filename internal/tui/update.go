@@ -451,12 +451,11 @@ func (m Model) renderCategoryPickPopup() string {
 	contentW := w - 6         // border(2) + padding(4)
 
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Filter by Category") + "\n\n")
 	b.WriteString("  " + m.categoryPickInput.View() + "\n\n")
 
 	query := m.categoryPickInput.Value()
 	items := categoryPickItems(m.categories, query)
-	const maxRows = 12 // cap so the popup doesn't grow unbounded with many categories
+	const maxRows = 12 // cap so the popup doesn"t grow unbounded with many categories
 	for i, item := range items {
 		if i >= maxRows {
 			b.WriteString(styleMuted.Render(fmt.Sprintf("  … and %d more (keep typing to narrow)", len(items)-maxRows)) + "\n")
@@ -482,12 +481,7 @@ func (m Model) renderCategoryPickPopup() string {
 	}
 	b.WriteString("\n" + styleMuted.Render("↑/↓ navigate  ·  enter: apply  ·  esc: cancel"))
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(1, 2).
-		Width(w).
-		Render(b.String())
+	return popupBox("Filter by Category", w, b.String())
 }
 
 // updateCategoryTranslate handles the "t" (summary view) AI-suggested
@@ -541,7 +535,6 @@ func (m Model) renderCategoryTranslatePopup() string {
 	contentW := w - 6
 
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Translate Categories (AI)") + "\n\n")
 
 	switch {
 	case m.translateLoading:
@@ -571,12 +564,7 @@ func (m Model) renderCategoryTranslatePopup() string {
 		b.WriteString("\n" + styleMuted.Render("↑/↓ navigate  ·  space toggle  ·  A select all  ·  enter apply  ·  esc cancel"))
 	}
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(1, 2).
-		Width(w).
-		Render(b.String())
+	return popupBox("Translate Categories (AI)", w, b.String())
 }
 
 // renderSettingsPopup renders the "o" settings screen: current data
@@ -591,7 +579,6 @@ func (m Model) renderSettingsPopup() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Settings") + "\n\n")
 
 	mode := "local (this machine only)"
 	if config.Shared() {
@@ -608,12 +595,7 @@ func (m Model) renderSettingsPopup() string {
 		}
 		b.WriteString(styleErr.Render(msg) + "\n\n")
 		b.WriteString(styleMuted.Render("y: confirm  ·  any other key: cancel"))
-		return lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBlue).
-			Padding(1, 2).
-			Width(w).
-			Render(b.String())
+		return popupBox("Settings", w, b.String())
 	}
 
 	if m.settingsErr != nil {
@@ -628,12 +610,7 @@ func (m Model) renderSettingsPopup() string {
 	}
 	b.WriteString("\n" + styleMuted.Render("esc: close"))
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(1, 2).
-		Width(w).
-		Render(b.String())
+	return popupBox("Settings", w, b.String())
 }
 
 // renderSettingsBrowsePopup renders the directory-only filepicker. Same
@@ -643,7 +620,6 @@ func (m Model) renderSettingsPopup() string {
 // budget.
 func (m Model) renderSettingsBrowsePopup(w, contentW int) string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Choose a folder to sync") + "\n")
 	b.WriteString(styleMuted.Render(ansi.Truncate(m.fp.CurrentDirectory, contentW, "…")) + "\n\n")
 
 	for _, line := range strings.Split(m.fp.View(), "\n") {
@@ -652,12 +628,7 @@ func (m Model) renderSettingsBrowsePopup(w, contentW int) string {
 
 	b.WriteString(styleMuted.Render("↑/↓ or j/k: navigate  ·  enter: open folder  ·  s: sync here  ·  esc: cancel"))
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(1, 2).
-		Width(w).
-		Render(b.String())
+	return popupBox("Choose a folder to sync", w, b.String())
 }
 
 func (m Model) openImport() Model {
@@ -1063,17 +1034,11 @@ func (m Model) renderProfilesPopup() string {
 	contentW := w - 6
 
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Profiles") + "\n\n")
 
 	if m.profileRemoving != "" {
 		b.WriteString(styleErr.Render(fmt.Sprintf("Forget profile %q? (its database stays on disk)", m.profileRemoving)) + "\n\n")
 		b.WriteString(styleMuted.Render("y: confirm  ·  any other key: cancel"))
-		return lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBlue).
-			Padding(1, 2).
-			Width(w).
-			Render(b.String())
+		return popupBox("Profiles", w, b.String())
 	}
 
 	if m.profileCreating {
@@ -1082,12 +1047,7 @@ func (m Model) renderProfilesPopup() string {
 			b.WriteString(styleErr.Render("✗ "+m.profileErr.Error()) + "\n\n")
 		}
 		b.WriteString(styleMuted.Render("enter: create  ·  esc: cancel"))
-		return lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBlue).
-			Padding(1, 2).
-			Width(w).
-			Render(b.String())
+		return popupBox("Profiles", w, b.String())
 	}
 
 	b.WriteString(styleMuted.Render("Each profile is a fully separate database.") + "\n\n")
@@ -1112,12 +1072,7 @@ func (m Model) renderProfilesPopup() string {
 
 	b.WriteString("\n" + styleMuted.Render("↑/↓ navigate  ·  enter: switch  ·  n: new  ·  d: remove  ·  esc: close"))
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(1, 2).
-		Width(w).
-		Render(b.String())
+	return popupBox("Profiles", w, b.String())
 }
 
 func (m Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

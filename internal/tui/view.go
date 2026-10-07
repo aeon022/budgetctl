@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -46,17 +45,17 @@ func (m Model) viewContent() string {
 	case viewForm:
 		return m.renderForm()
 	case viewImport:
-		return overlay.Center(m.renderList(), m.renderImportPopup(), m.width, m.height, 0)
+		return overlay.CenterDim(m.renderList(), m.renderImportPopup(), m.width, m.height, 0)
 	case viewDetail:
-		return overlay.Center(m.renderList(), m.renderDetailPopup(), m.width, m.height, 0)
+		return overlay.CenterDim(m.renderList(), m.renderDetailPopup(), m.width, m.height, 0)
 	case viewCategoryPick:
-		return overlay.Center(m.renderList(), m.renderCategoryPickPopup(), m.width, m.height, 0)
+		return overlay.CenterDim(m.renderList(), m.renderCategoryPickPopup(), m.width, m.height, 0)
 	case viewSettings:
-		return overlay.Center(m.renderList(), m.renderSettingsPopup(), m.width, m.height, 0)
+		return overlay.CenterDim(m.renderList(), m.renderSettingsPopup(), m.width, m.height, 0)
 	case viewProfiles:
-		return overlay.Center(m.renderList(), m.renderProfilesPopup(), m.width, m.height, 0)
+		return overlay.CenterDim(m.renderList(), m.renderProfilesPopup(), m.width, m.height, 0)
 	case viewCategoryTranslate:
-		return overlay.Center(m.renderSummaryView(), m.renderCategoryTranslatePopup(), m.width, m.height, 0)
+		return overlay.CenterDim(m.renderSummaryView(), m.renderCategoryTranslatePopup(), m.width, m.height, 0)
 	default:
 		return m.renderList()
 	}
@@ -117,7 +116,6 @@ func (m Model) renderDetailPopup() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Transaction") + "\n\n")
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Date:", t.Date.Format("2006-01-02")))
 	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Amount:", amtStyle.Render(fmt.Sprintf("%+.2f €", t.Amount))))
 	if t.Payee != "" {
@@ -136,12 +134,7 @@ func (m Model) renderDetailPopup() string {
 	}
 	b.WriteString("\n" + styleMuted.Render("e: edit  ·  any other key: close"))
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(1, 2).
-		Width(w).
-		Render(b.String())
+	return popupBox("Transaction", w, b.String())
 }
 
 // wrapCapped truncates s to maxLen (with an ellipsis) before letting the
@@ -163,32 +156,30 @@ func (m Model) importPopupWidth() int {
 	if w < 50 {
 		w = 50
 	}
-	return w
+	return min(w, max(m.width, 20)) // never wider than the terminal
 }
 
 func (m Model) renderImportPopup() string {
 	var body string
+	title := "Import CSV"
 	switch m.importStep {
 	case importPickFile:
 		body = m.renderImportPickFile()
 	case importPreview:
+		title = "Import Preview"
 		body = m.renderImportPreview()
 	case importRunning:
-		body = styleHeader.Render("Importing…") + "\n\n" + styleMuted.Render("please wait")
+		title = "Importing…"
+		body = styleMuted.Render("please wait")
 	case importDone:
+		title = "Import done"
 		body = m.renderImportDone()
 	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(1, 2).
-		Width(m.importPopupWidth()).
-		Render(body)
+	return popupBox(title, m.importPopupWidth(), body)
 }
 
 func (m Model) renderImportPickFile() string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Import CSV") + "\n\n")
 	if m.importErr != nil {
 		b.WriteString(styleErr.Render("✗ "+m.importErr.Error()) + "\n\n")
 	}
@@ -213,7 +204,6 @@ func (m Model) renderImportPickFile() string {
 
 func (m Model) renderImportPreview() string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("Import Preview") + "\n\n")
 	b.WriteString(fmt.Sprintf("File: %s\n", filepath.Base(m.importPath)))
 	b.WriteString(fmt.Sprintf("Transactions found: %d\n\n", len(m.importParsed)))
 
@@ -295,14 +285,7 @@ func (m Model) renderImportDone() string {
 // current section on the left, live date on the right, rule underneath.
 // section is what changes ("Transactions", "Summary", "New Entry", "Help").
 func (m Model) renderHeader(section string) string {
-	left := styleHeader.Render("budgetctl") + styleMuted.Render(" · "+section)
-	right := styleMuted.Render(time.Now().Format("Mon 02 Jan"))
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if pad < 1 {
-		pad = 1
-	}
-	return left + strings.Repeat(" ", pad) + right + "\n" +
-		styleDivider.Render(strings.Repeat("─", m.width)) + "\n"
+	return strings.Join(m.chromeHead(section, ""), "\n") + "\n"
 }
 
 // listStartRow returns the row (0-indexed within the rendered View()) the
@@ -652,21 +635,22 @@ func (m Model) renderForm() string {
 	if m.editTx != nil {
 		heading = "Edit Entry"
 	}
-	b.WriteString(m.renderHeader(heading) + "\n")
 	for i := range m.form {
 		label := formLabels[i]
 		labelStyle := styleMuted
 		if i == m.formIdx {
 			labelStyle = styleHeader
 		}
-		b.WriteString("  " + labelStyle.Render(fmt.Sprintf("%-13s", label)) + m.form[i].View() + "\n")
+		in := m.form[i]
+		in.SetWidth(max(m.width-18, 8)) // fixed 78 overflowed narrow terminals
+		b.WriteString(ansi.Truncate("  "+labelStyle.Render(fmt.Sprintf("%-13s", label))+in.View(), m.width, "…") + "\n")
 	}
-	b.WriteString("\n  " + styleHelp.Render("negative amount = expense · positive = income") + "\n")
+	b.WriteString("\n" + ansi.Truncate("  "+styleHelp.Render("negative amount = expense · positive = income"), m.width, "…") + "\n")
 	if m.err != nil {
-		b.WriteString("\n  " + styleErr.Render("✗ "+m.err.Error()) + "\n")
+		b.WriteString("\n" + ansi.Truncate("  "+styleErr.Render("✗ "+m.err.Error()), m.width, "…") + "\n")
 	}
-	b.WriteString("\n  " + styleHelp.Render("tab/enter: next field  ·  ctrl+s: save  ·  esc: cancel") + "\n")
-	return b.String()
+	foot := m.chromeFoot("", [2]string{"esc", "cancel"}, [2]string{"ctrl+s", "save"}, [2]string{"tab", "next field"}, [2]string{"enter", "next"})
+	return ui.Frame(m.height, strings.Join(m.chromeHead(heading, ""), "\n"), b.String(), foot)
 }
 
 func (m Model) helpContent() string {
@@ -709,7 +693,7 @@ func (m Model) helpContent() string {
 		Text("").
 		Text("Import & categorize on the CLI: budgetctl import file.csv · budgetctl tag PATTERN --category NAME").
 		String()
-	return m.renderHeader("Help") + body
+	return body
 }
 
 // openHelp sizes and populates the transient help popup (see
@@ -738,8 +722,6 @@ func (m Model) openHelp() Model {
 	return m
 }
 
-var stylePopupBorder = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorBlue).Padding(0, 1)
-
 // renderHelpPopup renders the help viewport in a bordered box, meant to be
 // composited over the list view via overlay.Center rather than replacing
 // the whole screen — the list stays visible around it.
@@ -749,13 +731,11 @@ func (m Model) renderHelpPopup() string {
 		footer = fmt.Sprintf("j/k scroll (%d%%)  ·  %s", int(m.helpVP.ScrollPercent()*100), footer)
 	}
 	body := m.helpVP.View() + "\n\n" + styleHelp.Render(footer)
-	return stylePopupBorder.Width(m.helpPopW).Render(body)
+	return ui.Panel(m.helpPopW, m.helpPopH, "Help", body, true)
 }
 
 func (m Model) renderSummaryView() string {
 	var b strings.Builder
-
-	b.WriteString(m.renderHeader("Summary"))
 
 	// month tabs (windowed — see renderMonthTabBar)
 	b.WriteString(m.renderMonthTabBar(m.width))
@@ -772,29 +752,29 @@ func (m Model) renderSummaryView() string {
 		}
 		b.WriteString(strings.Join(aparts, "") + "\n")
 	}
-
 	b.WriteString(styleDivider.Render(strings.Repeat("─", m.width)) + "\n")
 
-	vpH := m.height - 7
-	if len(m.accounts) > 0 {
-		vpH--
-	}
+	head := strings.Join(m.chromeHead("Summary", m.headerContext()), "\n")
+	headRows := strings.Count(head, "\n") + 1
+	topRows := strings.Count(b.String(), "\n")
+	vpH := max(m.height-headRows-topRows-1, 1) // -1 footer
 	if m.settingGoal {
 		vpH--
 	}
-	m.vp.SetHeight(vpH)
+	m.vp.SetHeight(max(vpH, 1))
 	b.WriteString(m.vp.View())
 
 	if m.settingGoal {
-		b.WriteString("  " + styleCategory.Render("goal (category amount): ") + m.goalInput.View() + "\n")
+		b.WriteString("\n  " + styleCategory.Render("goal (category amount): ") + m.goalInput.View())
 	}
 
 	pct := ""
 	if m.vp.TotalLineCount() > m.vp.Height() {
-		pct = fmt.Sprintf(" %d%%", int(m.vp.ScrollPercent()*100))
+		pct = fmt.Sprintf("%d%%", int(m.vp.ScrollPercent()*100))
 	}
-	b.WriteString("\n  " + styleHelp.Render("esc:back  g:goal  t:translate  tab:month  y:year  ]:account  ↑↓:scroll  q:quit") + styleMuted.Render(pct))
-	return b.String()
+	foot := m.chromeFoot(styleMuted.Render(pct), [2]string{"esc", "back"}, [2]string{"g", "goal"}, [2]string{"t", "translate"},
+		[2]string{"tab", "month"}, [2]string{"↑↓", "scroll"}, [2]string{"q", "quit"}, [2]string{"y", "year"}, [2]string{"]", "account"})
+	return ui.Frame(m.height, head, strings.TrimRight(b.String(), "\n"), foot)
 }
 
 func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []models.MonthlyPoint, recurring []budget.RecurringPattern, width int) string {
