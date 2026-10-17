@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -23,12 +25,12 @@ func Serve() error {
 	s.AddTool(toolSummary(), handleSummary)
 	s.AddTool(toolImport(), handleImport)
 	s.AddTool(toolAddTx(), handleAddTx)
-	s.AddTool(toolDeleteTx(), handleDeleteTx)
+	s.AddTool(toolDeleteTx(), confirmed(handleDeleteTx))
 	s.AddTool(toolTag(), handleTag)
 	s.AddTool(toolApplyRules(), handleApplyRules)
 	s.AddTool(toolListGoals(), handleListGoals)
 	s.AddTool(toolSetGoal(), handleSetGoal)
-	s.AddTool(toolDeleteGoal(), handleDeleteGoal)
+	s.AddTool(toolDeleteGoal(), confirmed(handleDeleteGoal))
 	s.AddTool(toolDetectRecurring(), handleDetectRecurring)
 	return server.ServeStdio(s)
 }
@@ -63,6 +65,7 @@ func toolAddTx() mcp.Tool {
 
 func toolDeleteTx() mcp.Tool {
 	return mcp.NewTool("delete_transaction",
+		confirmParam,
 		mcp.WithDescription("Delete a transaction by its ID (as returned by list_transactions)."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Transaction ID")),
 	)
@@ -262,6 +265,9 @@ func handleImport(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 		return mcp.NewToolResultError("path is required"), nil
 	}
 
+	if err := checkImportFile(path); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 	txs, err := budget.Import(path)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -336,6 +342,7 @@ func toolSetGoal() mcp.Tool {
 
 func toolDeleteGoal() mcp.Tool {
 	return mcp.NewTool("delete_budget_goal",
+		confirmParam,
 		mcp.WithDescription("Remove a budget goal for a category."),
 		mcp.WithString("category", mcp.Required(), mcp.Description("Category name")),
 	)
@@ -460,4 +467,22 @@ func handleApplyRules(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolRe
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText(fmt.Sprintf("Applied rules to %d transactions", n)), nil
+}
+
+// checkImportFile keeps import_transactions from being used to read arbitrary files (parse errors can
+// echo content): only a regular CSV/TSV/TXT file of reasonable size.
+func checkImportFile(path string) error {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".csv", ".tsv", ".txt":
+	default:
+		return fmt.Errorf("refusing to import %q: only .csv, .tsv or .txt files", filepath.Base(path))
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %q", filepath.Base(path))
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > 20<<20 {
+		return fmt.Errorf("refusing to import %q: not a regular file or larger than 20 MB", filepath.Base(path))
+	}
+	return nil
 }
