@@ -99,7 +99,7 @@ var paletteCommands = []palette.Command{
 	{Name: "summary", Desc: "Summary — categories, charts, budget goals", Key: "s"},
 	{Name: "settings", Desc: "Settings — sync across devices", Key: "o"},
 	{Name: "profiles", Desc: "Switch or manage isolated data profiles", Key: "p"},
-	{Name: "theme", Desc: "Next colour theme (saved for the whole suite)", Key: "T"},
+	{Name: "theme", Desc: "Colour theme picker with live preview (saved for the whole suite)", Key: "T"},
 	{Name: "help", Desc: "Show help", Key: "?"},
 	{Name: "quit", Desc: "Quit budgetctl", Key: "q"},
 }
