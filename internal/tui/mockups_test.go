@@ -19,7 +19,9 @@ func TestRenderLandingMockups(t *testing.T) {
 	}
 	isolate(t)
 	now := time.Now()
-	day := func(d int) time.Time { return time.Date(now.Year(), now.Month(), max(now.Day()-d, 1), 12, 0, 0, 0, now.Location()) }
+	day := func(d int) time.Time {
+		return time.Date(now.Year(), now.Month(), max(now.Day()-d, 1), 12, 0, 0, 0, now.Location())
+	}
 	tx := func(id string, d int, payee, desc, cat string, amt float64) models.Transaction {
 		return models.Transaction{ID: id, Date: day(d), Payee: payee, Description: desc, Category: cat, Account: "Girokonto", Amount: amt}
 	}

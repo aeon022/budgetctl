@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/aeon022/missionctl-core/themepicker"
 	"time"
 
 	"charm.land/bubbles/v2/filepicker"
@@ -108,9 +109,10 @@ type settingsAppliedMsg struct {
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type Model struct {
-	view   view
-	width  int
-	height int
+	themePicker themepicker.Picker // the "T" popup
+	view        view
+	width       int
+	height      int
 
 	txs           []models.Transaction // filtered (by searchQ) view of allTxs
 	allTxs        []models.Transaction // everything loaded for the current month/account scope

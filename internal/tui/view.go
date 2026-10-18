@@ -25,7 +25,11 @@ import (
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (m Model) View() tea.View {
-	v := tea.NewView(m.viewContent())
+	content := m.viewContent()
+	if m.themePicker.IsOpen() { // not dimmed: the live preview behind the popup is the point
+		content = overlay.Center(content, m.themePicker.View(), m.width, m.height, 0)
+	}
+	v := tea.NewView(content)
 	// v1's WithAltScreen()/WithMouseAllMotion() are per-View fields in v2.
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
