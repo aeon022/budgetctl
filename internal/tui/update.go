@@ -20,6 +20,7 @@ import (
 	"github.com/aeon022/budgetctl/internal/models"
 	"github.com/aeon022/budgetctl/internal/store"
 	"github.com/aeon022/missionctl-core/palette"
+	"github.com/aeon022/missionctl-core/theme"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 )
@@ -1397,6 +1398,15 @@ func (m Model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t := m.txs[m.cursor]
 			m.deleteTarget = &t
 		}
+	case "T": // live theme switch; the choice is saved for every suite tool
+		name, err := theme.Cycle()
+		if err != nil {
+			m.status = "Theme: " + err.Error()
+		} else {
+			m.status = "Theme: " + name
+		}
+		m.statusTime = time.Now()
+		return m, nil
 	case "u":
 		if m.lastDeleted != nil {
 			t := m.lastDeleted

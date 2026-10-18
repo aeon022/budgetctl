@@ -24,46 +24,57 @@ var adaptive = func() func(light, dark string) color.Color {
 }()
 
 var (
+	// Rebuilt by refreshStyles when the theme changes.
+	colorBlue, colorGreen, colorRed, colorMuted, colorSubtle, colorAmber                                                                                                                                                                                                                                     color.Color
+	styleTabActive, styleTabInact, styleDivider, styleHeader, styleHelp, styleErr, styleOK, styleMuted, styleSelected, styleIncome, styleExpense, styleCategory, stylePayee, styleCategoryRow, styleSummaryH, styleToday, styleDateWeek, styleDateMonth, styleDateOld, styleAcctTabActive, styleAcctTabInact lipgloss.Style
+)
+
+func init() {
+	refreshStyles()
+	theme.OnChange(refreshStyles)
+}
+
+// refreshStyles builds every cached colour and style from the active theme (live theme switching).
+func refreshStyles() {
 	// Shared across the suite via missionctl-core/theme — keeping the local
 	// names so every existing style reference below stays unchanged.
-	colorBlue   = theme.BlueV2
-	colorGreen  = theme.GreenV2
-	colorRed    = theme.RedV2
-	colorMuted  = theme.MutedV2
+	colorBlue = theme.BlueV2
+	colorGreen = theme.GreenV2
+	colorRed = theme.RedV2
+	colorMuted = theme.MutedV2
 	colorSubtle = theme.SubtleV2
-	colorAmber  = theme.AmberV2
-
+	colorAmber = theme.AmberV2
 	// One tab look for months AND accounts: the same filled pill as ui.Pill(…, ui.Info)
 	// (it used to be a blue pill for months and a green one for accounts).
 	styleTabActive = lipgloss.NewStyle().Bold(true).
-			Foreground(theme.OnAccentV2).
-			Background(colorBlue).
-			Padding(0, 1)
-	styleTabInact      = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 1)
+		Foreground(theme.OnAccentV2).
+		Background(colorBlue).
+		Padding(0, 1)
+	styleTabInact = lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 1)
 	styleAcctTabActive = styleTabActive
-	styleAcctTabInact  = styleTabInact
-	styleDivider       = lipgloss.NewStyle().Foreground(colorSubtle)
-	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleHelp          = lipgloss.NewStyle().Foreground(colorMuted)
-	styleErr           = lipgloss.NewStyle().Foreground(colorRed)
-	styleOK            = lipgloss.NewStyle().Foreground(colorGreen)
-	styleMuted         = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSelected      = lipgloss.NewStyle().
-				Background(theme.SelectedBgV2).
-				Foreground(theme.SelectedFgV2).
-				Bold(true)
-	styleIncome   = lipgloss.NewStyle().Foreground(colorGreen)
-	styleExpense  = lipgloss.NewStyle().Foreground(colorRed)
+	styleAcctTabInact = styleTabInact
+	styleDivider = lipgloss.NewStyle().Foreground(colorSubtle)
+	styleHeader = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleHelp = lipgloss.NewStyle().Foreground(colorMuted)
+	styleErr = lipgloss.NewStyle().Foreground(colorRed)
+	styleOK = lipgloss.NewStyle().Foreground(colorGreen)
+	styleMuted = lipgloss.NewStyle().Foreground(colorMuted)
+	styleSelected = lipgloss.NewStyle().
+		Background(theme.SelectedBgV2).
+		Foreground(theme.SelectedFgV2).
+		Bold(true)
+	styleIncome = lipgloss.NewStyle().Foreground(colorGreen)
+	styleExpense = lipgloss.NewStyle().Foreground(colorRed)
 	styleCategory = lipgloss.NewStyle().Foreground(colorAmber)
 	// list rows: payee in the normal text color, category muted (amber only flags "uncategorized")
-	stylePayee       = lipgloss.NewStyle()
+	stylePayee = lipgloss.NewStyle()
 	styleCategoryRow = lipgloss.NewStyle().Foreground(colorMuted)
-	styleSummaryH    = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	styleToday       = lipgloss.NewStyle().Foreground(adaptive("214", "220")).Bold(true)
-	styleDateWeek    = lipgloss.NewStyle().Foreground(colorMuted)
-	styleDateMonth   = lipgloss.NewStyle().Foreground(adaptive("247", "242"))
-	styleDateOld     = lipgloss.NewStyle().Foreground(colorSubtle)
-)
+	styleSummaryH = lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	styleToday = lipgloss.NewStyle().Foreground(adaptive("214", "220")).Bold(true)
+	styleDateWeek = lipgloss.NewStyle().Foreground(colorMuted)
+	styleDateMonth = lipgloss.NewStyle().Foreground(adaptive("247", "242"))
+	styleDateOld = lipgloss.NewStyle().Foreground(colorSubtle)
+}
 
 // ── command palette (":") ────────────────────────────────────────────────────
 //
@@ -88,6 +99,7 @@ var paletteCommands = []palette.Command{
 	{Name: "summary", Desc: "Summary — categories, charts, budget goals", Key: "s"},
 	{Name: "settings", Desc: "Settings — sync across devices", Key: "o"},
 	{Name: "profiles", Desc: "Switch or manage isolated data profiles", Key: "p"},
+	{Name: "theme", Desc: "Next colour theme (saved for the whole suite)", Key: "T"},
 	{Name: "help", Desc: "Show help", Key: "?"},
 	{Name: "quit", Desc: "Quit budgetctl", Key: "q"},
 }

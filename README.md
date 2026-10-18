@@ -273,6 +273,7 @@ Shows a full-month overview:
 | `f` | Filter by category (fuzzy-searchable) |
 | `:` | Command palette — run any action by name |
 | `s` | Switch to Summary view |
+| `T` | Next colour theme — switches live and is saved for the whole suite |
 | `Tab` / `Shift+Tab` | Next / previous month |
 | `y` / `Y` | Jump to next / previous year with data |
 | `[` / `]` | Cycle accounts |

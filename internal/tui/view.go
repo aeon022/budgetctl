@@ -547,7 +547,7 @@ func (m Model) renderList() string {
 	var rows []string
 	if len(m.txs) == 0 {
 		if listH >= 3 {
-			rows = strings.Split(emptystate.Render(fullW, listH, "", "No transactions yet", "press n to add one, or import a CSV: budgetctl import file.csv"), "\n")
+			rows = strings.Split(emptystate.Render(fullW, listH, "", "Welcome to budgetctl", budgetOnboarding()), "\n")
 		} else {
 			rows = []string{styleHelp.Render("  No transactions yet — press n to add one, or import a CSV: budgetctl import file.csv")}
 		}
@@ -658,6 +658,7 @@ func (m Model) helpContent() string {
 		Section("Navigation").
 		Row("j / ↓", "move down").
 		Row("k / ↑", "move up").
+		Row("T", "next colour theme (saved for the whole suite)").
 		Row("g / G", "jump to top / bottom").
 		Row("pgdn/up", "page down / up").
 		Row("tab", "next month").
@@ -954,4 +955,14 @@ func renderSummary(sum *models.Summary, goals []models.GoalStatus, trend []model
 
 	_ = width
 	return b.String()
+}
+
+// budgetOnboarding is the first-run hint of an empty ledger: what to try first.
+func budgetOnboarding() string {
+	return strings.Join([]string{
+		"○  n   add your first transaction",
+		"○  i   import a CSV",
+		"○  :   command palette",
+		"○  T   pick a colour theme",
+	}, "\n")
 }
