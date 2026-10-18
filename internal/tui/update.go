@@ -605,6 +605,7 @@ func (m Model) renderSettingsPopup() string {
 		b.WriteString(styleOK.Render(m.status) + "\n\n")
 	}
 
+	b.WriteString(styleHelp.Render("t") + "  theme: " + styleOK.Render(theme.Current()) + " (press to switch)\n")
 	b.WriteString(styleHelp.Render("b") + "  browse for a folder to sync (iCloud Drive, Dropbox, …)\n")
 	if config.Shared() {
 		b.WriteString(styleHelp.Render("r") + "  reset to the local (non-synced) database\n")
@@ -835,6 +836,13 @@ func (m Model) updateSettings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "q":
 		m.view = viewList
+		return m, nil
+	case "t":
+		if _, err := theme.Cycle(); err != nil {
+			m.settingsErr = err
+		} else {
+			m.settingsErr = nil
+		}
 		return m, nil
 	case "b":
 		return m.openSettingsBrowse()

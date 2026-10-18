@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aeon022/missionctl-core/theme"
@@ -25,5 +26,22 @@ func TestThemeKeySwitchesLiveAndSaves(t *testing.T) {
 	}
 	if got := mm.(Model).status; got != "Theme: "+theme.Current() {
 		t.Errorf("a short confirmation should name the theme, got %q", got)
+	}
+}
+
+func TestSettingsThemeKeyCyclesAndShowsTheme(t *testing.T) {
+	isolate(t)
+	orig := theme.Current()
+	t.Cleanup(func() { _ = theme.Apply(orig) })
+
+	m := New()
+	m.width, m.height = 100, 30
+	m = m.openSettings()
+	mm, _ := tuitest.Send(m, tuitest.Key("t"))
+	if theme.Current() == orig {
+		t.Fatalf("t in settings must switch the theme, still %q", orig)
+	}
+	if got := mm.(Model).renderSettingsPopup(); !strings.Contains(got, theme.Current()) {
+		t.Errorf("the settings popup should name the active theme:\n%s", got)
 	}
 }
