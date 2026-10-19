@@ -4,6 +4,16 @@ Terminal budget tracker. Track income and expenses manually or import bank CSV e
 
 Part of the [missionctl](https://github.com/aeon022/missionctl) suite. No bank API. No cloud. Works from CSV exports you download yourself.
 
+![budgetctl demo](docs/demo.gif)
+
+**Install**
+
+```bash
+brew install aeon022/tap/budgetctl
+```
+
+Prebuilt binaries for macOS and Linux (arm64, amd64) are on the [Releases](https://github.com/aeon022/budgetctl/releases) page. Questions: see [SUPPORT.md](SUPPORT.md).
+
 ---
 
 ## Quick Start
