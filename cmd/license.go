@@ -64,12 +64,6 @@ var licenseStatusCmd = &cobra.Command{
 			fmt.Println("Then run: budgetctl license activate <key>")
 			return
 		}
-		if strings.HasPrefix(key, "MCTL-DEV-") {
-			fmt.Println("License Type: PRO (Local Dev/Family Override)")
-			fmt.Printf("License Key:  %s\n", licensing.MaskKey(key))
-			fmt.Println("Status:       ACTIVE (local override, not registered with Polar)")
-			return
-		}
 
 		result, err := licensing.Validate(config.PolarOrgID(), key)
 		if err != nil {
