@@ -26,6 +26,7 @@ func DetectRecurring(txs []models.Transaction) []RecurringPattern {
 	type bucket struct {
 		desc     string
 		category string
+		latest   time.Time
 		amounts  []float64
 		dates    []time.Time
 	}
@@ -46,8 +47,9 @@ func DetectRecurring(txs []models.Transaction) []RecurringPattern {
 		}
 		b.amounts = append(b.amounts, -t.Amount) // store as positive
 		b.dates = append(b.dates, t.Date)
-		// prefer most-recent description
-		if t.Date.After(b.dates[len(b.dates)-1]) {
+		// prefer the most recent description
+		if t.Date.After(b.latest) {
+			b.latest = t.Date
 			b.desc = t.Description
 			b.category = t.Category
 		}
