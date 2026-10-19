@@ -152,6 +152,16 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// HasRawElsewhere reports whether an identical bank row (same account, same
+// raw line) was already imported from a file other than source. Transaction
+// IDs hash the file name, so overlapping exports under different names would
+// otherwise import their shared days twice.
+func (s *Store) HasRawElsewhere(ctx context.Context, account, raw, source string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM transactions WHERE account=? AND raw=? AND source<>?`, account, raw, source).Scan(&n)
+	return n > 0, err
+}
+
 func (s *Store) Upsert(ctx context.Context, t *models.Transaction) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO transactions (id,date,payee,description,amount,category,account,source,raw,imported_at)

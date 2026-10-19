@@ -37,6 +37,9 @@ var importCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Imported %d transactions from %s\n", res.Imported, path)
+		if res.Duplicates > 0 {
+			fmt.Printf("Skipped %d rows already imported from an overlapping file\n", res.Duplicates)
+		}
 		if useAI && res.AICategorized > 0 {
 			fmt.Printf("AI-categorized: %d transactions\n", res.AICategorized)
 		}

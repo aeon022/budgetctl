@@ -13,6 +13,7 @@ import (
 type ImportResult struct {
 	Transactions  []models.Transaction // parsed rows, before any DB write
 	Imported      int
+	Duplicates    int // rows already imported from an overlapping file
 	AICategorized int
 }
 
@@ -36,6 +37,10 @@ func ImportFile(ctx context.Context, s *store.Store, path, account string, useAI
 		}
 		if txs[i].Category == "" && len(rules) > 0 {
 			txs[i].Category = Categorize(txs[i].Payee+" "+txs[i].Description, rules)
+		}
+		if dup, err := s.HasRawElsewhere(ctx, txs[i].Account, txs[i].Raw, txs[i].Source); err == nil && dup {
+			res.Duplicates++
+			continue
 		}
 		if err := s.Upsert(ctx, &txs[i]); err == nil {
 			res.Imported++
