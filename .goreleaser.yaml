@@ -5,6 +5,7 @@ project_name: budgetctl
 before:
   hooks:
     - go mod tidy
+    - sh -c 'rm -rf completions && mkdir completions && for s in bash zsh fish; do go run . completion $s > completions/budgetctl.$s; done'
 
 builds:
   - main: .
@@ -23,6 +24,10 @@ builds:
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
+      - completions/*
 
 checksum:
   name_template: checksums.txt
@@ -48,5 +53,8 @@ brews:
     description: "Budget tracking from your terminal - import bank CSVs, analyze spending"
     install: |
       bin.install "budgetctl"
+      bash_completion.install "completions/budgetctl.bash" => "budgetctl"
+      zsh_completion.install "completions/budgetctl.zsh" => "_budgetctl"
+      fish_completion.install "completions/budgetctl.fish"
     test: |
       system "#{bin}/budgetctl", "version"
