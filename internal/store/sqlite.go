@@ -149,7 +149,7 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
-	return nil
+	return s.migrateAnchors()
 }
 
 // HasRawElsewhere reports whether an identical bank row (same account, same

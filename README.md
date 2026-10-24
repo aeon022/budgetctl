@@ -68,6 +68,9 @@ budgetctl apply-rules                                Re-apply all rules
 budgetctl goal set CATEGORY AMOUNT                   Set monthly limit
 budgetctl goal list [--month 2026-07]                Show goal progress
 budgetctl goal delete CATEGORY                       Remove a goal
+budgetctl balance [--json]                           Account balances (only for accounts with an opening balance)
+budgetctl balance set ACCOUNT AMOUNT --as-of DATE    Opening balance from a bank statement
+budgetctl balance clear ACCOUNT                      Remove an opening balance
 budgetctl recurring                                  Detect recurring payments
 budgetctl export [--year 2026] [--format csv|json] [-o FILE]
 budgetctl profile add NAME [--data-dir DIR]          Create an isolated profile

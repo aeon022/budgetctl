@@ -537,3 +537,50 @@ func TestDeleteAll(t *testing.T) {
 		t.Fatalf("expected no transactions left, got %+v", remaining)
 	}
 }
+
+func TestBalancesNeedAnAnchorAndCountOnlyLaterBookings(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	add := func(id, date, account string, amount float64) {
+		d, _ := time.Parse("2006-01-02", date)
+		tr := tx(id, amount)
+		tr.Date, tr.Account = d, account
+		if err := s.Upsert(ctx, tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("a1", "2026-09-30", "giro", -100) // on the anchor day: already inside the anchor
+	add("a2", "2026-10-01", "giro", -50.10)
+	add("a3", "2026-10-05", "giro", 1000)
+	add("s1", "2026-10-02", "sparen", 5)
+	asOf, _ := time.Parse("2006-01-02", "2026-09-30")
+	if err := s.SetAnchor(ctx, "giro", asOf, 2000); err != nil {
+		t.Fatal(err)
+	}
+	bs, err := s.Balances(ctx)
+	if err != nil || len(bs) != 2 {
+		t.Fatalf("%+v %v", bs, err)
+	}
+	if g := bs[0]; g.Account != "giro" || !g.Anchored || g.Balance != 2949.90 || g.Since != 2 {
+		t.Errorf("giro: %+v", g)
+	}
+	if sp := bs[1]; sp.Account != "sparen" || sp.Anchored || sp.Balance != 0 {
+		t.Errorf("an account without anchor must not get a balance: %+v", sp)
+	}
+	// re-anchoring replaces; an anchor for an account without bookings still lists it
+	if err := s.SetAnchor(ctx, "bar", asOf, 10.5); err != nil {
+		t.Fatal(err)
+	}
+	if bs, _ = s.Balances(ctx); len(bs) != 3 || bs[0].Account != "bar" || bs[0].Balance != 10.5 {
+		t.Errorf("%+v", bs)
+	}
+	if ok, _ := s.ClearAnchor(ctx, "bar"); !ok {
+		t.Error("clear existing")
+	}
+	if ok, _ := s.ClearAnchor(ctx, "bar"); ok {
+		t.Error("clear missing must report false")
+	}
+	if err := s.SetAnchor(ctx, "  ", asOf, 1); err == nil {
+		t.Error("empty account must fail")
+	}
+}
