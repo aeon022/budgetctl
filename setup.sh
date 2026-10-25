@@ -80,3 +80,6 @@ echo "Done. Run:"
 echo "  budgetctl import bank.csv   # import your first bank CSV export"
 echo "  budgetctl summary --month   # monthly overview"
 echo "  budgetctl                   # open TUI"
+
+# man pages (best effort): man budgetctl
+mkdir -p "$HOME/.local/share/man/man1" && "${INSTALL_DIR:-$HOME/.local/bin}/budgetctl" man "$HOME/.local/share/man/man1" >/dev/null 2>&1 || true
