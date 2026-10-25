@@ -215,3 +215,25 @@ func TestAddTxWithActivityOffStillAdds(t *testing.T) {
 		t.Error("logging off must not create the log")
 	}
 }
+
+func TestBalancesNeverGuessAnOpeningBalance(t *testing.T) {
+	setupTestDB(t)
+	text := func() string {
+		res := callTool(t, handleBalances, nil)
+		return res.Content[0].(mcp.TextContent).Text
+	}
+	if got := text(); !strings.Contains(got, "checking: no opening balance") || strings.Contains(got, "Total (accounts with a balance): 1") {
+		t.Fatalf("without an anchor there is no balance:\n%s", got)
+	}
+	s, err := store.New(config.DBPath(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SetAnchor(context.Background(), "checking", time.Now().AddDate(0, -2, 0), 500); err != nil {
+		t.Fatal(err)
+	}
+	if got := text(); !strings.Contains(got, "checking: 2300.00 €") || !strings.Contains(got, "Total (accounts with a balance): 2300.00 €") {
+		t.Fatalf("anchor 500 + salary 3000 - rent 1200 = 2300:\n%s", got)
+	}
+}

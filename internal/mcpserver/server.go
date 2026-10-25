@@ -23,6 +23,7 @@ func Serve() error {
 	)
 	s.AddTool(toolList(), handleList)
 	s.AddTool(toolSummary(), handleSummary)
+	s.AddTool(toolBalances(), handleBalances)
 	s.AddTool(toolImport(), handleImport)
 	s.AddTool(toolAddTx(), handleAddTx)
 	s.AddTool(toolDeleteTx(), confirmed(handleDeleteTx))
@@ -485,4 +486,42 @@ func checkImportFile(path string) error {
 		return fmt.Errorf("refusing to import %q: not a regular file or larger than 20 MB", filepath.Base(path))
 	}
 	return nil
+}
+
+func toolBalances() mcp.Tool {
+	return mcp.NewTool("balances",
+		mcp.WithDescription("Account balances. Only accounts with an opening balance set by the user (from a bank statement) have one; the others are listed as missing and never estimated."),
+	)
+}
+
+func handleBalances(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	s, err := store.New(config.DBPath(), config.Shared())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	defer s.Close()
+	bs, err := s.Balances(context.Background())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(bs) == 0 {
+		return mcp.NewToolResultText("No accounts yet — import a bank CSV first."), nil
+	}
+	var b strings.Builder
+	var total float64
+	missing := 0
+	for _, a := range bs {
+		if !a.Anchored {
+			missing++
+			fmt.Fprintf(&b, "%s: no opening balance (the user can set one with: budgetctl balance set ACCOUNT AMOUNT --as-of DATE)\n", a.Account)
+			continue
+		}
+		total += a.Balance
+		fmt.Fprintf(&b, "%s: %.2f € (anchor %.2f on %s, %d bookings since)\n", a.Account, a.Balance, a.Anchor, a.AsOf, a.Since)
+	}
+	fmt.Fprintf(&b, "Total (accounts with a balance): %.2f €", total)
+	if missing > 0 {
+		fmt.Fprintf(&b, " — %d account(s) without opening balance not counted", missing)
+	}
+	return mcp.NewToolResultText(b.String()), nil
 }
