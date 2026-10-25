@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,11 +19,16 @@ var licenseCmd = &cobra.Command{
 }
 
 var licenseActivateCmd = &cobra.Command{
-	Use:   "activate <key>",
+	Use:   "activate [key|-]",
 	Short: "Activate your license key on this machine",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
+	Long:  "Pass the key as the argument, or send it on standard input (no argument, or \"-\") to keep it out of the process list: echo KEY | budgetctl license activate",
 	Run: func(cmd *cobra.Command, args []string) {
-		key := strings.TrimSpace(args[0])
+		key, err := activationKey(args)
+		if err != nil {
+			fmt.Println("✗", err)
+			os.Exit(1)
+		}
 		orgID := config.PolarOrgID()
 		label := licensing.Label("budgetctl")
 
@@ -91,4 +98,20 @@ func init() {
 	licenseCmd.AddCommand(licenseActivateCmd)
 	licenseCmd.AddCommand(licenseStatusCmd)
 	rootCmd.AddCommand(licenseCmd)
+}
+
+// activationKey takes the key from the argument, or from standard input when the argument is "-" or
+// missing, so the secret need not appear in the process list.
+func activationKey(args []string) (string, error) {
+	if len(args) == 1 && args[0] != "-" {
+		return strings.TrimSpace(args[0]), nil
+	}
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if key := strings.TrimSpace(line); key != "" {
+		return key, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("no key on standard input: %w", err)
+	}
+	return "", errors.New("no key on standard input")
 }
